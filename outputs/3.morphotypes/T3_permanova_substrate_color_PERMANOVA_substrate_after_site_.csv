@@ -1,0 +1,5 @@
+"Source","Df","SumOfSqs","R2","F","Pr(>F)"
+"site",6,2.7506,0.281,1.9186,1e-04
+"direct_substrate",8,2.168,0.2215,1.1342,0.154
+"Residual",17,4.062,0.4149,NA,NA
+"Total",31,9.7896,1,NA,NA

@@ -1,0 +1,397 @@
+---
+title: "correlations_environments"
+author: "Stephanie Martinez"
+date: "2025-09-03"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Packages
+
+```{r}
+library(corrplot)
+library(GGally)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(phyloseq)
+library(phyloseqCompanion)
+library(viridis)
+library(beepr)
+library(ggtext)
+library(flextable)
+library(usdm)
+library(caret)
+```
+
+# Phyloseq
+
+Analysis will be performed in envrionmental variables from:
+
+- Reefs and lakes combined
+- Reefs only
+- Lakes only
+
+```{r}
+reefs_lakes  <- readRDS("data/bcms_filtered_raja2023.rds")
+reefs        <- readRDS("data/bcms_filtered_reefs_raja2023.rds")
+lakes        <- readRDS("data/bcms_filtered_lakes_raja2023.rds")
+```
+
+# Environmental matrixes
+
+The environmental parameters were embedded in the physoseq object. So we can extract it from there and manipulate it as a dataframe. 
+
+
+Select and standardize the environmental variables for analysis
+
+```{r environmental scale}
+
+env_gllvm_reeflake <- sample.data.frame(reefs_lakes@sam_data) %>% 
+  filter_at(vars(site), all_vars(!is.na(.)))
+
+env_gllvm_reef <- sample.data.frame(reefs@sam_data) %>% 
+  filter_at(vars(site), all_vars(!is.na(.)))
+
+env_gllvm_lake <- sample.data.frame(lakes@sam_data) %>% 
+  filter_at(vars(site), all_vars(!is.na(.)))
+
+#Standarize numerical environmental data
+
+env_gllvm_reeflake.scaled <- env_gllvm_reeflake %>% 
+  select(connection,temperature,salinity,chla, mean.PO4, DIN) %>% 
+  scale() %>% 
+  as.data.frame()
+
+env_gllvm_reef.scaled <- env_gllvm_reef %>% 
+  select(temperature,salinity,chla, mean.PO4, DIN) %>% 
+  scale() %>% 
+  as.data.frame()
+
+env_gllvm_lake.scaled <- env_gllvm_lake %>% 
+  select(temperature,salinity,chla, mean.PO4, DIN) %>% 
+  scale() %>% 
+  as.data.frame()
+```
+
+# Correlation tests
+
+Correlation test
+
+```{r correlation and significance test}
+#Reefs + Lakes
+cor_matrix_reeflake <- cor(env_gllvm_reeflake.scaled, use = "pairwise.complete.obs")
+cor_test_reeflake <- cor.mtest(env_gllvm_reeflake.scaled, conf.level = 0.95)
+
+#Reefs
+cor_matrix_reef <- cor(env_gllvm_reef.scaled, use = "pairwise.complete.obs")
+cor_test_reef <- cor.mtest(env_gllvm_reef.scaled, conf.level = 0.95)
+
+#Lakes
+cor_matrix_lake <- cor(env_gllvm_lake.scaled, use = "pairwise.complete.obs")
+cor_test_lake <- cor.mtest(env_gllvm_lake.scaled, conf.level = 0.95)
+
+```
+
+# Correlation Plot 
+
+Setting correlation plot color palette
+```{r corr palette}
+color_cor <-c("#7F3B08",
+              "#B75B04",
+              "#E68D25",
+              "#FDC57E",
+              "#FEEDD6",
+              "#E9EAF3",
+              "#BEBADA",
+              "#8B7FB4",
+              "#582F8C",
+              "#3B1559")
+
+```
+
+## Reefs + Lakes
+
+```{r}
+svg("figures/correlations/correlation_env_reefs&lakes.svg", #assign directory
+    width = 11,
+    height = 11)
+
+corrplot(cor_matrix_reeflake,
+         method = "circle",                 # Circle style
+         type = "lower",                    # Only upper triangle
+         order = "alphabet",                     # Order of variables
+         p.mat = cor_test_reeflake$p,                # Add significance
+         sig.level = 0.05,                  # Show only significant correlations
+         insig = "p-value",                   # Leave blank if not significant
+         col = colorRampPalette(color_cor)(10),  # Color palette
+         tl.col = "black",                  # Axis text color
+         tl.srt = 45,                       # Rotate labels
+         tl.cex = 0.9,                      # Axis label size
+         cl.pos = "b",                      # Color legend at bottom
+         cl.ratio = 0.2,                    # Color legend size
+         addgrid.col = "grey",            
+         mar = c(1, 1, 2, 1),               # Plot margins
+         diag = FALSE)
+dev.off()
+```
+
+Variable filtering after correlation tests
+
+```{r}
+# Set and remove cutoff
+remove_idx <- findCorrelation(cor_matrix_reeflake, cutoff = 0.75)
+
+# Get variable names to remove
+vars_to_remove <- colnames(env_gllvm_reeflake.scaled)[remove_idx]
+print(vars_to_remove)
+
+# Filter the dataframe / final environmental matrix
+env_gllvm_reeflake.final <- env_gllvm_reeflake.scaled[, -remove_idx]
+
+# View remaining variables
+cat("\n✅ Variables kept for modeling:\n")
+print(colnames(env_gllvm_reeflake.final))
+
+#Check VIF
+vifstep(env_gllvm_reeflake.final, th = 5)  #No collinearity on remaining variables
+
+write.csv(env_gllvm_reeflake.final, file = "data/environmental_scaled_filtered_reefs&lakes.csv")
+```
+
+Variables kept for modeling are `r env_gllvm_reeflake.final`/ temperature, salinity, chla, mean.PO4, DIN
+
+## Reefs 
+
+```{r}
+svg("figures/correlations/correlation_env_reefs.svg", #assign directory
+    width = 11,
+    height = 11)
+
+corrplot(cor_matrix_reef,
+         method = "circle",                 # Circle style
+         type = "lower",                    # Only upper triangle
+         order = "alphabet",                     # Order of variables
+         p.mat = cor_test_reef$p,                # Add significance
+         sig.level = 0.05,                  # Show only significant correlations
+         insig = "p-value",                   # Leave blank if not significant
+         col = colorRampPalette(color_cor)(10),  # Color palette
+         tl.col = "black",                  # Axis text color
+         tl.srt = 45,                       # Rotate labels
+         tl.cex = 0.9,                      # Axis label size
+         cl.pos = "b",                      # Color legend at bottom
+         cl.ratio = 0.2,                    # Color legend size
+         addgrid.col = "grey",            
+         mar = c(1, 1, 2, 1),               # Plot margins
+         diag = FALSE)
+dev.off()
+```
+
+Variable filtering after correlation tests
+
+```{r}
+remove_idx <- findCorrelation(cor_matrix_reef, cutoff = 0.75)
+
+# Get variable names to remove
+vars_to_remove <- colnames(env_gllvm_reef.scaled)[remove_idx]
+print(vars_to_remove)
+
+# Keep the remaining variables
+if (length(remove_idx) > 0) {
+  env_gllvm_reef.final <- env_gllvm_reef.scaled[, -remove_idx, drop = FALSE]
+} else {
+  env_gllvm_reef.final <- env_gllvm_reef.scaled
+}
+
+cat("\n✅ Variables kept for modeling:\n")
+print(colnames(env_gllvm_reef.final))
+
+# Run VIF
+if (ncol(env_gllvm_reef.final) > 1) {
+  vifstep(env_gllvm_reef.final, th = 5)
+} else {
+  message("⚠️ Not enough variables left for VIF check.")
+}
+
+# Salinity has VIF >5 so it will be removed 
+env_gllvm_reef.final <- env_gllvm_reef.final %>% 
+  select(-salinity)
+
+write.csv(env_gllvm_reef.final, file = "data/environmental_scaled_filtered_reefs.csv")
+```
+
+Variables kept for modeling are `r env_gllvm_reef.final`/ temperature, chla, PO4, DIN
+
+## Lakes
+
+```{r}
+svg("figures/correlations/correlation_env_lakes.svg", #assign directory
+    width = 11,
+    height = 11)
+
+corrplot(cor_matrix_lake,
+         method = "circle",                 # Circle style
+         type = "lower",                    # Only upper triangle
+         order = "alphabet",                     # Order of variables
+         p.mat = cor_test_lake$p,                # Add significance
+         sig.level = 0.05,                  # Show only significant correlations
+         insig = "p-value",                   # Leave blank if not significant
+         col = colorRampPalette(color_cor)(10),  # Color palette
+         tl.col = "black",                  # Axis text color
+         tl.srt = 45,                       # Rotate labels
+         tl.cex = 0.9,                      # Axis label size
+         cl.pos = "b",                      # Color legend at bottom
+         cl.ratio = 0.2,                    # Color legend size
+         addgrid.col = "grey",            
+         mar = c(1, 1, 2, 1),               # Plot margins
+         diag = FALSE)
+dev.off()
+```
+
+Variable filtering after correlation tests
+
+```{r}
+remove_idx <- findCorrelation(cor_matrix_lake, cutoff = 0.75)
+
+# Get variable names to remove
+vars_to_remove <- colnames(env_gllvm_lake.scaled)[remove_idx]
+print(vars_to_remove)
+
+# Keep the remaining variables
+if (length(remove_idx) > 0) {
+  env_gllvm_lake.final <- env_gllvm_lake.scaled[, -remove_idx, drop = FALSE]
+} else {
+  env_gllvm_lake.final <- env_gllvm_lake.scaled
+}
+
+cat("\n✅ Variables kept for modeling:\n")
+print(colnames(env_gllvm_lake.final))
+
+# Run VIF
+if (ncol(env_gllvm_lake.final) > 1) {
+  vifstep(env_gllvm_lake.final, th = 5)
+} else {
+  message("⚠️ Not enough variables left for VIF check.")
+}
+
+write.csv(env_gllvm_lake.final, file = "data/environmental_scaled_filtered_lakes.csv")
+```
+
+Variables kept for modeling are `r env_gllvm_lake.final`/ salinity, temperature, chla, PO4, DIN
+
+vifstep flagged PO4 as having multicollinearity problems. We decided to retain them since the correlations between the other variables was not higher than 0.6. But we keep this in mind for further models interpretations. 
+
+# Final dfs
+
+Final environmental files are: 
+
+Reefs + Lakes:   "data/environmental_scaled_filtered_reefs&lakes.csv"
+Reefs            "data/environmental_scaled_filtered_reefs.csv"
+Lakes:           "data/environmental_scaled_filtered_lakes.csv"
+
+# Summary tables
+
+Mean, median, and average of nutrients per habitat type
+
+```{r}
+summary_reefs <- env_gllvm_reef %>%
+  pivot_longer(
+    cols = c(temperature, mean.PO4, DIN, mean.NO3, mean.NO2, salinity),  # variables to summarise
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(site_type, variable) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    n = sum(!is.na(value)),
+    .groups = "drop"
+  )
+summary_reefs
+
+summary_lakes <- env_gllvm_lake %>%
+  pivot_longer(
+    cols = c(temperature, mean.PO4, DIN, mean.NO3, mean.NO2, salinity),  # variables to summarise
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(site_type, variable) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    n = sum(!is.na(value)),
+    .groups = "drop"
+  )
+summary_lakes
+
+summary_all <- bind_rows(summary_reefs, summary_lakes)
+summary_all
+
+```
+
+# Gradient of nutrients
+
+```{r}
+summary_site <- env_gllvm_reeflake %>% 
+  pivot_longer(
+    cols = c(temperature, mean.PO4, DIN, mean.NO3, mean.NO2, mean.NH4, salinity),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(site_type, site, variable) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  )  %>%
+  pivot_wider(
+    names_from = variable, 
+    values_from = c(mean, min, max)
+  )
+View(summary_site)
+
+summary_site_reef <- env_gllvm_reef %>% 
+  pivot_longer(
+    cols = c(temperature, mean.PO4, DIN, mean.NO3, mean.NO2, mean.NH4, salinity),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(site_type, site, variable) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  )  %>%
+  pivot_wider(
+    names_from = variable, 
+    values_from = c(mean, min, max))
+View(summary_site_reef)
+
+summary_site_lake <- env_gllvm_lake %>% 
+  pivot_longer(
+    cols = c(temperature, mean.PO4, DIN, mean.NO3, mean.NO2, mean.NH4, salinity),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(site_type, site, variable) %>%
+  summarise(
+    mean = mean(value, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  )  %>%
+  pivot_wider(
+    names_from = variable, 
+    values_from = c(mean, min, max))
+View(summary_site_lake)
+```
+

@@ -1,0 +1,997 @@
+---
+title: "5. FAPROTAX: predicted functions of reef BCMs"
+author: "Stephanie Martinez"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r root, include = FALSE}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
+
+# Aim
+
+Predict the functional potential of the reef BCM communities from taxonomy with FAPROTAX (Louca et al. 2016), and test whether the relative abundance of taxa with key metabolic potentials (energy sources: photoautotrophy vs chemoheterotrophy; nitrogen cycling) differs among sites and changes along the nutrient, temperature and chl-a gradients.
+
+Workflow:
+
+1. Reef count table and taxonomy from the filtered phyloseq object (as in script 6c).
+2. FAPROTAX annotation with the R package microeco (`trans_func`): each taxon is assigned to zero, one or several functions.
+3. For each mat, the share of reads belonging to taxa with each function, and how many reads could be assigned at all.
+4. Function profiles per site (heatmap), and which taxa carry each function (section 2.5).
+5. Differences among sites for each selected function (Kruskal–Wallis + Dunn, as in script 2).
+6. Beta regression of each selected function against each environmental variable (one predictor per model), BH correction across models.
+
+FAPROTAX functions are nested and can overlap (e.g. *oxygenic_photoautotrophy* is part of *photoautotrophy*, which is part of *phototrophy*), so the functions do not add up to 100% and are analysed one at a time.
+
+Outputs: `figures/5.faprotax/F<n>_<name>.pdf` and `outputs/5.faprotax/T<n>_<name>.docx` (+ `.csv`).
+
+# Setup
+
+```{r setup, echo=FALSE, warning=FALSE}
+packages_used <- c("dplyr", "tidyr", "tibble", "ggplot2", "patchwork",
+                   "phyloseq", "microeco", "glmmTMB", "DHARMa", "performance",
+                   "dunn.test", "flextable", "officer")
+
+suppressMessages(invisible(lapply(packages_used, library, character.only = TRUE)))
+
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) message("All packages loaded correctly") else
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+rm(packages_used, missing_pkgs)
+
+theme_set(theme_bw())
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 7, out.width = "100%")
+set_flextable_defaults(theme_fun = theme_vanilla, font.size = 10, bold_header = TRUE)
+
+fig_dir <- "figures/5.faprotax"
+tab_dir <- "outputs/5.faprotax"
+for (d in c(fig_dir, tab_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Settings
+
+```{r settings}
+# ---- Input ----
+counts_file <- "data/bcms_filtered_raja2023.rds"   # reef phyloseq with filtered counts (as in 6c)
+
+# ---- Functions to model (FAPROTAX names; check the list printed in section 2) ----
+# Energy sources (research question: phototrophs vs heterotrophs):
+#  - photoautotrophy: in these mats almost entirely oxygenic (cyanobacteria); phototrophy is identical
+#    (no photoheterotrophs assigned) and anoxygenic photoautotrophy is < 0.1% of reads;
+#  - chemoheterotrophy: all heterotrophs assigned by FAPROTAX here (= aerobic + anaerobic
+#    chemoheterotrophy, shown separately in the heatmap only).
+energy_functions <- c("photoautotrophy",     # phototrophs (cyanobacterial primary production)
+                      "chemoheterotrophy")   # heterotrophs (remineralisation of organic matter)
+nitrogen_functions <- c("aerobic_ammonia_oxidation",  # nitrification, first step
+                        "nitrate_reduction")          # nitrate as electron acceptor / N loss
+# ---- Predictors (same as dbRDA and GLLVM) ----
+predictors <- c("DIN", "mean.PO4", "temperature", "chla")
+
+# ---- Response scale for the models ----
+# Function shares are proportions of reads, so they are coupled: when cyanobacteria (oxygenic
+# photoautotrophy) make up more of the mat, every other function automatically makes up less.
+# "all":                every function as share of all reads (as in the heatmap; recommended for the
+#                       question "does the functional make-up of the mat change?")
+# "non_cyanobacterial": non-phototrophic functions as share of the reads NOT from photosynthetic
+#                       cyanobacteria ("does the non-cyanobacterial community change?"); mats consisting
+#                       only of cyanobacteria are then left out (0 reads in the denominator)
+other_denominator <- "all"
+
+# ---- Heatmap: functions that differ by less than this (relative to their maximum) in every mat are
+#      shown as one row, e.g. phototrophy vs oxygenic photoautotrophy (one anoxygenic ASV, < 0.1%) ----
+near_identical_tol <- 0.01
+
+# ---- Filters and models ----
+min_prev_func <- 0.5           # model a function only if present (> 0) in at least this share of mats
+model_level   <- "site_mean"   # "site_mean": one value per site (n = 8), as the Hill regressions in script 2
+                               # "sample":    one value per mat, with a random intercept for site
+p_adj_method  <- "BH"          # across all models of one group (energy, nitrogen)
+heatmap_min   <- 0.001   # heatmap: functions with mean share >= 0.1% of reads
+heatmap_exclude <- c("animal_parasites_or_symbionts", "intracellular_parasites",
+                     "predatory_or_exoparasitic")   # host- or lifestyle-based groups, not metabolism
+
+# ---- Genus plot (F5): the main functions of Figure 7A, split by genus ----
+genus_plot_n_funcs <- 6    # the n most abundant heatmap functions (as in Figure 7A)
+genus_min_pct      <- 3    # genera contributing >= this % of a function are shown; the rest = "Other taxa"
+genus_max          <- 10   # at most this many genera per function
+
+# ---- Taxon names translated for FAPROTAX matching (our name = name used by FAPROTAX) ----
+# FAPROTAX v1.2.12 uses older names for some groups. Translated for the matching only, at every rank.
+# Add pairs here when the name check (section 2.1) shows a mismatch.
+fp_name_map <- c("Cyanobacteriota" = "Cyanobacteria",      # phylum
+                 "Cyanophyceae"    = "Cyanobacteriia")     # class of the photosynthetic cyanobacteria
+```
+
+## Output helpers
+
+```{r output helpers}
+save_fig <- function(plot, name, width = 11, height = 11) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), plot = plot,
+         device = cairo_pdf, width = width, height = height, units = "in")
+}
+
+save_tab <- function(table, name) {
+  doc <- read_docx() %>% body_add_flextable(autofit(flextable(table)))
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  write.csv(table, file.path(tab_dir, paste0(name, ".csv")), row.names = FALSE)
+}
+
+otu_matrix <- function(ps) {
+  m <- as(otu_table(ps), "matrix")
+  if (taxa_are_rows(ps)) m <- t(m)
+  m
+}
+
+# Same definition of "unassigned" as in scripts 2 and 6c
+is_unassigned <- function(x) {
+  is.na(x) | x == "" |
+    grepl("unknown|unidentified|uncultured|unclassified|metagenome", x, ignore.case = TRUE)
+}
+```
+
+## Graphical parameters
+
+Same site names, order and shapes as scripts 2, 3 and 6.
+
+```{r graphical parameters}
+order_sitetype <- c("MiosKon", "LumbaLumba", "SouthKri", "Arborek",
+                    "Yenbuba", "New Reef", "SoridoBay", "GracesWall")
+
+site_labels <- c("MiosKon" = "MiosKon", "LumbaLumba" = "Lumba-Lumba", "SouthKri" = "SouthKri",
+                 "Arborek" = "Arborek", "Yenbuba" = "Yenbuba", "New Reef" = "New Reef",
+                 "SoridoBay" = "Sorido Bay", "GracesWall" = "Grace's Wall")
+site_levels <- unname(site_labels[order_sitetype])
+
+shape_sites <- c("Arborek" = 16, "Grace's Wall" = 17, "Lumba-Lumba" = 15, "MiosKon" = 18,
+                 "New Reef" = 8, "Sorido Bay" = 1, "SouthKri" = 2, "Yenbuba" = 0)
+
+# Phylum colours and order: same as scripts 2 and 6c
+phylum_colors <- c("Cyanobacteriota"   = "#b02b25",
+                   "Proteobacteria"    = "#185563",
+                   "Bacteroidota"      = "#00A087",
+                   "Planctomycetota"   = "#0C2C84",
+                   "Verrucomicrobiota" = "#F39B7F",
+                   "Crenarchaeota"     = "#FFC857",
+                   "Acidobacteriota"   = "#9071C1",
+                   "Actinobacteriota"  = "#F26419",
+                   "Fusobacteriota"    = "#7E6148",
+                   "Desulfobacterota"  = "#1B065E",
+                   "Myxococcota"       = "#8491B4",
+                   "Bdellovibrionota"  = "#7B4F9E",
+                   "Firmicutes"        = "#135353",
+                   "Chloroflexi"       = "#E16A86",
+                   "Deinococcota"      = "#7FA33A",
+                   "Spirochaetota"     = "#4DBBD5",
+                   "Unidentified"      = "grey70")
+phylum_order <- c("Cyanobacteriota", "Proteobacteria", "Bacteroidota", "Planctomycetota",
+                  "Verrucomicrobiota", "Myxococcota", "Crenarchaeota", "Actinobacteriota", "Bdellovibrionota")
+
+# Phyla present: fixed order first, others alphabetically, Unidentified last; colours from phylum_colors
+# (phyla without a colour get one from the "Dark 3" palette, as in 6c)
+phylum_levels <- function(present) {
+  c(intersect(phylum_order, present),
+    sort(setdiff(present, c(phylum_order, "Unidentified"))),
+    intersect("Unidentified", present))
+}
+phylum_palette <- function(phyla) {
+  pal  <- phylum_colors[phyla]
+  miss <- is.na(pal)
+  if (any(miss)) {
+    # Phyla without a colour: distinct extra colours (not close to the ones above), with a message
+    extra <- c("#DC0000", "#91D1C2", "#3C5488", "#B09C85", "#E6AB02", "#666666")
+    pal[miss] <- rep(extra, length.out = sum(miss))
+    message("No colour in phylum_colors for: ", paste(phyla[miss], collapse = ", "),
+            " (temporary colour used; add them to phylum_colors)")
+  }
+  setNames(unname(pal), phyla)
+}
+
+# Predictor labels (plotmath)
+env_vars <- c(DIN         = "DIN",
+              mean.PO4    = "PO[4]^'3-'",
+              temperature = "Temperature",
+              chla        = "'Chl-a'")
+
+# FAPROTAX names as readable labels ("oxygenic_photoautotrophy" -> "Oxygenic photoautotrophy")
+func_label <- function(x) {
+  x <- gsub("_", " ", x)
+  paste0(toupper(substr(x, 1, 1)), substr(x, 2, nchar(x)))
+}
+
+# Regression lines: blue = significant (adjusted p < 0.05), black = not (as in script 2)
+sig_line_colours <- c("TRUE" = "#2166AC", "FALSE" = "black")
+```
+
+#--------------------------
+
+# 1. Data
+
+```{r data}
+reef_counts <- readRDS(counts_file)
+
+# Reef mats only
+env_all <- as(sample_data(reef_counts), "data.frame")
+env <- env_all %>%
+  filter(site %in% names(site_labels)) %>%
+  mutate(site = factor(site_labels[site], levels = site_levels)) %>%
+  select(sample_id, site, all_of(predictors))
+rownames(env) <- env$sample_id
+if (nrow(env) < nrow(env_all))
+  message(nrow(env_all) - nrow(env), " samples not from the 8 reef sites removed")
+
+reef_counts <- prune_samples(sample_names(reef_counts) %in% env$sample_id, reef_counts)
+reef_counts <- prune_taxa(taxa_sums(reef_counts) > 0, reef_counts)
+
+# Environmental values per site (nutrients were measured in triplicate and averaged per site)
+env_site <- env %>%
+  group_by(site) %>%
+  summarise(across(all_of(predictors), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+```
+
+## 1.1 microeco object
+
+FAPROTAX matches taxa by name, so unassigned ranks (uncultured, unknown, …) are left empty and every rank gets the standard prefix (`k__`, `p__`, … `g__`). Names that FAPROTAX spells differently (e.g. the cyanobacterial phylum and class) are translated with `fp_name_map` (settings).
+
+```{r microtable}
+counts <- otu_matrix(reef_counts)   # mats x ASVs
+
+rank_prefix <- c(Kingdom = "k__", Domain = "k__", Phylum = "p__", Class = "c__",
+                 Order = "o__", Family = "f__", Genus = "g__", Species = "s__")
+
+tax <- as.data.frame(as(tax_table(reef_counts), "matrix"), stringsAsFactors = FALSE)
+names(tax)[names(tax) == "Domain"] <- "Kingdom"
+tax <- tax[, intersect(names(rank_prefix), names(tax)), drop = FALSE]
+for (r in names(tax)) tax[[r]] <- paste0(rank_prefix[[r]], ifelse(is_unassigned(tax[[r]]), "", tax[[r]]))
+
+# Translate names for FAPROTAX (fp_name_map in the settings), e.g. our "Cyanobacteriota"/"Cyanophyceae"
+# (SILVA 138.2) to "Cyanobacteria"/"Cyanobacteriia" used by FAPROTAX. Without this, no cyanobacterium is
+# assigned to photosynthesis. Non-photosynthetic cyanobacterial classes (Sericytochromatia,
+# Vampirivibrionia) keep their names and are excluded by FAPROTAX itself.
+for (r in names(tax)) {
+  nm  <- sub("^[a-z]__", "", tax[[r]])
+  hit <- nm %in% names(fp_name_map)
+  tax[[r]][hit] <- paste0(rank_prefix[[r]], fp_name_map[nm[hit]])
+}
+
+reef_meco <- microtable$new(otu_table    = as.data.frame(t(counts)),   # ASVs x mats
+                            tax_table    = tax,
+                            sample_table = env)
+reef_meco$tidy_dataset()
+reef_meco
+```
+
+#--------------------------
+
+# 2. FAPROTAX annotation
+
+```{r faprotax}
+fp <- trans_func$new(reef_meco)
+fp$for_what <- "prok"
+fp$cal_spe_func(prok_database = "FAPROTAX")
+
+# ASV x function table (1 = the ASV has the function), aligned with the count table
+fn_matrix <- matrix(0, nrow = ncol(counts), ncol = ncol(fp$res_func),
+                    dimnames = list(colnames(counts), colnames(fp$res_func)))
+shared <- intersect(colnames(counts), rownames(fp$res_func))
+fn_matrix[shared, ] <- as.matrix(fp$res_func[shared, ])
+
+# FAPROTAX groups that only label taxa, not a metabolism (excluded from "assigned to a function")
+taxon_label_groups <- intersect(c("photosynthetic_cyanobacteria", "nonphotosynthetic_cyanobacteria",
+                                  "chloroplasts"), colnames(fn_matrix))
+# Functions carried by the photosynthetic cyanobacteria (identical in our data)
+photo_functions <- intersect(c("phototrophy", "photoautotrophy", "oxygenic_photoautotrophy",
+                               "photosynthetic_cyanobacteria"), colnames(fn_matrix))
+
+# Reads per mat assigned to each function
+func_reads <- counts %*% fn_matrix
+total_reads     <- rowSums(counts)
+cyano_asv       <- rownames(fn_matrix)[fn_matrix[, "photosynthetic_cyanobacteria"] == 1]
+non_cyano_reads <- total_reads - rowSums(counts[, cyano_asv, drop = FALSE])
+
+# Share of all reads (heatmap, coverage)
+func_tab <- as.data.frame(func_reads / total_reads) %>%
+  select(where(~ sum(.x) > 0)) %>%
+  rownames_to_column("sample_id")
+
+# Share used in the models: non-phototrophic functions relative to non-cyanobacterial reads (setting)
+func_tab_model <- func_tab
+if (other_denominator == "non_cyanobacterial") {
+  other <- setdiff(names(func_tab), c("sample_id", photo_functions))
+  share_other <- func_reads[, other, drop = FALSE] / non_cyano_reads
+  share_other[!is.finite(share_other)] <- NA          # mats with no non-cyanobacterial reads
+  func_tab_model[other] <- as.data.frame(share_other)
+  if (any(non_cyano_reads == 0))
+    message(sum(non_cyano_reads == 0), " mat(s) without non-cyanobacterial reads excluded from those models")
+}
+
+# Check: cyanobacterial ASVs should now be assigned to oxygenic photoautotrophy
+n_cyano_photo <- sum(grepl("Cyanobacteriia", tax$Class))
+check_funcs <- c("photosynthetic_cyanobacteria", "nonphotosynthetic_cyanobacteria",
+                 "oxygenic_photoautotrophy", "phototrophy", "nitrogen_fixation")
+tibble(Function = check_funcs,
+       ASVs_assigned = as.numeric(colSums(fp$res_func)[check_funcs]),
+       expected = c(n_cyano_photo, sum(grepl("Sericytochromatia|Vampirivibrionia", tax$Class)),
+                    n_cyano_photo, NA, NA))
+
+all_functions <- setdiff(names(func_tab), c("sample_id", taxon_label_groups))
+message(length(all_functions), " FAPROTAX functions found in the data")
+sort(all_functions)
+```
+
+## 2.1 Name matching check
+
+FAPROTAX matches taxa by name (mostly genus or species, sometimes combined with a higher rank such as `Cyanobacteria.*Oscillatoriales`). This section checks which of our names occur in the FAPROTAX patterns and which abundant taxa stayed unassigned.
+
+- `by_phylum`: share of reads assigned per phylum; `name_in_FAPROTAX = FALSE` with names in `similar_FAPROTAX_names` points to a renamed group (add it to `fp_name_map`).
+- `by_rank`: how many of our names (and reads) FAPROTAX could recognise at each rank.
+- `unassigned_genera`: the most abundant genera without any function; `genus_in_FAPROTAX = FALSE` means the database does not contain the genus (a database limitation, not fixable).
+- `mismatch_genera`: genera whose name occurs in FAPROTAX but that were not assigned. Usually FAPROTAX lists them only for specific species (`species_level_only = TRUE`; our ASVs have no species name, so they cannot match: not fixable). The others combine the genus with a higher rank (family, order) that is spelled differently in our taxonomy: fixable with `fp_name_map`.
+
+```{r faprotax diagnostics}
+data("prok_func_FAPROTAX", package = "microeco")
+
+# Every taxon name used in the FAPROTAX patterns
+fp_tokens <- prok_func_FAPROTAX$func_tax %>%
+  gsub(".*", "|", ., fixed = TRUE) %>% strsplit("|", fixed = TRUE) %>% unlist() %>% trimws() %>% unique()
+fp_tokens <- fp_tokens[fp_tokens != "" & !grepl("_group:", fp_tokens)]
+message("FAPROTAX version: ", prok_func_FAPROTAX$ver)
+
+# Our taxonomy (after translation) without prefixes, reads per ASV, and ASVs with >= 1 function
+tax_clean <- as.data.frame(lapply(tax, function(x) sub("^[a-z]__", "", x)), stringsAsFactors = FALSE)
+rownames(tax_clean) <- rownames(tax)
+asv_reads <- colSums(counts)[rownames(tax_clean)]
+assigned  <- rownames(fn_matrix)[rowSums(fn_matrix[, setdiff(colnames(fn_matrix), taxon_label_groups),
+                                                    drop = FALSE]) > 0]
+
+asv_info <- tibble(ASV = rownames(tax_clean), tax_clean, reads = asv_reads,
+                   assigned = ASV %in% assigned)
+
+# Per phylum: reads assigned, and whether the phylum name occurs in FAPROTAX
+by_phylum <- asv_info %>%
+  group_by(Phylum) %>%
+  summarise(ASVs = n(),
+            reads_pct_of_total = round(100 * sum(reads) / sum(asv_reads), 2),
+            ASVs_assigned      = sum(assigned),
+            reads_assigned_pct = round(100 * sum(reads[assigned]) / sum(reads), 1),
+            .groups = "drop") %>%
+  mutate(name_in_FAPROTAX = Phylum %in% fp_tokens,
+         similar_FAPROTAX_names = sapply(Phylum, function(p)
+           if (p == "") "" else paste(head(grep(substr(p, 1, 6), fp_tokens, value = TRUE, fixed = TRUE), 5),
+                                      collapse = ", "))) %>%
+  arrange(desc(reads_pct_of_total))
+by_phylum
+
+# Per rank: how many of our names (and reads) occur in FAPROTAX
+by_rank <- lapply(intersect(c("Phylum", "Class", "Order", "Family", "Genus"), names(tax_clean)), function(r)
+  asv_info %>% transmute(Rank = r, Name = .data[[r]], reads) %>% filter(Name != "")) %>%
+  bind_rows() %>%
+  group_by(Rank, Name) %>% summarise(reads = sum(reads), .groups = "drop") %>%
+  mutate(in_FAPROTAX = Name %in% fp_tokens) %>%
+  group_by(Rank) %>%
+  summarise(names = n(), names_in_FAPROTAX = sum(in_FAPROTAX),
+            reads_pct_with_name_in_FAPROTAX = round(100 * sum(reads[in_FAPROTAX]) / sum(reads), 1),
+            .groups = "drop") %>%
+  mutate(Rank = factor(Rank, levels = c("Phylum", "Class", "Order", "Family", "Genus"))) %>%
+  arrange(Rank)
+by_rank
+
+# Genera: assigned or not, and whether FAPROTAX knows the genus name
+genus_check <- asv_info %>%
+  filter(Genus != "") %>%
+  group_by(Phylum, Class, Genus) %>%
+  summarise(reads_pct = round(100 * sum(reads) / sum(asv_reads), 2),
+            assigned  = any(assigned), .groups = "drop") %>%
+  mutate(genus_in_FAPROTAX = Genus %in% fp_tokens) %>%
+  arrange(desc(reads_pct))
+
+unassigned_genera <- genus_check %>% filter(!assigned)
+head(unassigned_genera, 30)
+
+# For these genera: the FAPROTAX patterns that contain the name. If every pattern also names a species
+# (e.g. "Hoeflea.*phototrophica"), the genus is only listed for specific species: not a naming problem.
+# If a pattern combines the genus with a higher rank (e.g. "Flavobacteriaceae.*Fluviicola"), compare that
+# rank with our taxonomy: a different name there is a fixable mismatch (add it to fp_name_map).
+fp_pieces <- unique(unlist(strsplit(prok_func_FAPROTAX$func_tax, "|", fixed = TRUE)))
+fp_pieces <- gsub(".*", " ", fp_pieces, fixed = TRUE) %>% trimws()
+
+mismatch_genera <- genus_check %>%
+  filter(!assigned, genus_in_FAPROTAX) %>%
+  rowwise() %>%
+  mutate(FAPROTAX_patterns = {
+           hits <- fp_pieces[sapply(strsplit(fp_pieces, " "), function(w) Genus %in% w)]
+           paste(head(unique(hits), 4), collapse = " | ")
+         },
+         species_level_only = {
+           hits <- fp_pieces[sapply(strsplit(fp_pieces, " "), function(w) Genus %in% w)]
+           all(sapply(strsplit(hits, " "), function(w) {
+             k <- match(Genus, w); k < length(w) && grepl("^[a-z]", w[k + 1])
+           }))
+         }) %>%
+  ungroup()
+mismatch_genera %>% select(Genus, reads_pct, species_level_only, FAPROTAX_patterns) %>% print(n = Inf, width = Inf)
+
+# Mismatches that are NOT explained by species-level entries: check these names
+mismatch_genera %>% filter(!species_level_only) %>% select(Phylum, Class, Genus, FAPROTAX_patterns) %>%
+  print(n = Inf, width = Inf)
+write.csv(mismatch_genera, file.path(tab_dir, "check_faprotax_mismatch_genera.csv"), row.names = FALSE)
+
+write.csv(by_phylum,   file.path(tab_dir, "check_faprotax_by_phylum.csv"), row.names = FALSE)
+write.csv(by_rank,     file.path(tab_dir, "check_faprotax_by_rank.csv"),   row.names = FALSE)
+write.csv(genus_check, file.path(tab_dir, "check_faprotax_genera.csv"),    row.names = FALSE)
+```
+
+## 2.2 How much of the community could be assigned
+
+FAPROTAX only annotates taxa with cultured, characterised relatives, so part of each mat cannot be assigned. This share should be reported with the results.
+
+```{r coverage}
+# ASVs with at least one metabolic/ecological function (taxon-label groups not counted)
+assigned_taxa <- rownames(fn_matrix)[rowSums(fn_matrix[, setdiff(colnames(fn_matrix), taxon_label_groups),
+                                                        drop = FALSE]) > 0]
+rel <- sweep(counts, 1, rowSums(counts), "/")   # relative abundance per mat
+
+coverage <- tibble(sample_id   = rownames(rel),
+                   assigned    = rowSums(rel[, intersect(colnames(rel), assigned_taxa), drop = FALSE])) %>%
+  left_join(env %>% select(sample_id, site), by = "sample_id")
+
+coverage_table <- coverage %>%
+  group_by(site) %>%
+  summarise(mats = n(),
+            `Reads assigned, mean (%)` = round(100 * mean(assigned), 1),
+            `Range (%)` = paste0(round(100 * min(assigned), 1), "–", round(100 * max(assigned), 1)),
+            .groups = "drop") %>%
+  bind_rows(tibble(site = "All mats", mats = nrow(coverage),
+                   `Reads assigned, mean (%)` = round(100 * mean(coverage$assigned), 1),
+                   `Range (%)` = paste0(round(100 * min(coverage$assigned), 1), "–",
+                                        round(100 * max(coverage$assigned), 1)))) %>%
+  mutate(site = as.character(site)) %>%
+  rename(Site = site)
+coverage_table
+
+tibble(ASVs = ntaxa(reef_counts), ASVs_assigned = length(assigned_taxa),
+       ASVs_assigned_pct = round(100 * length(assigned_taxa) / ntaxa(reef_counts), 1))
+
+save_tab(coverage_table, "T1_faprotax_coverage")
+```
+
+## 2.3 Function profiles per site
+
+Mean share of reads per site for every function above `heatmap_min`. Functions are not exclusive, so columns do not add up to 100%.
+
+FAPROTAX functions are nested: oxygenic photoautotrophy is built from the photosynthetic cyanobacteria, photoautotrophy = oxygenic + anoxygenic photoautotrophy, and phototrophy = photoautotrophy + photoheterotrophy. In these mats virtually all phototrophs are cyanobacteria, so these functions contain the same reads and are shown once ("Oxygenic photoautotrophy (= phototrophy, photoautotrophy)"). The same applies to other identical pairs (e.g. aerobic ammonia oxidation = nitrification). Oxygenic photoautotrophy is therefore the relative abundance of photosynthetic cyanobacteria, not an additional result. Host- or lifestyle-based groups (`heatmap_exclude`) are left out. All functions found, with their share per site, are in table T4.
+
+```{r function heatmap, fig.width = 9, fig.height = 10}
+func_long <- func_tab %>%
+  pivot_longer(-sample_id, names_to = "Function", values_to = "share") %>%
+  left_join(env %>% select(sample_id, site), by = "sample_id")
+
+func_site <- func_long %>%
+  group_by(site, Function) %>%
+  summarise(share = mean(share, na.rm = TRUE), .groups = "drop")
+
+# Nested functions with (nearly) identical values in every mat are shown once, labelled with the most
+# specific name (fewest ASVs) and the others in brackets. "Nearly": the largest difference in any mat is
+# below near_identical_tol of the function's maximum (e.g. phototrophy vs oxygenic photoautotrophy,
+# which differ only by one anoxygenic phototroph at < 0.1% of reads).
+func_mat <- as.matrix(func_tab[, setdiff(all_functions, heatmap_exclude)])
+rel_diff <- function(a, b) {
+  mx <- max(c(a, b))
+  if (mx == 0) 0 else max(abs(a - b)) / mx
+}
+fn_names <- colnames(func_mat)
+d_rel <- matrix(0, length(fn_names), length(fn_names), dimnames = list(fn_names, fn_names))
+for (i in seq_along(fn_names)) for (j in seq_along(fn_names))
+  d_rel[i, j] <- rel_diff(func_mat[, i], func_mat[, j])
+func_cluster <- cutree(hclust(as.dist(d_rel), method = "complete"), h = near_identical_tol)
+func_groups  <- split(fn_names, func_cluster)
+func_rep <- sapply(func_groups, function(g) g[which.min(colSums(fp$res_func[, g, drop = FALSE]) +
+                                                         nchar(g) / 1000)])   # fewest ASVs = most specific
+rep_label <- setNames(sapply(names(func_groups), function(k) {
+  g <- func_groups[[k]]; r <- func_rep[[k]]
+  others <- setdiff(g, r)
+  exact  <- all(sapply(others, function(o) all(func_mat[, o] == func_mat[, r])))
+  if (length(others) == 0) func_label(r) else
+    paste0(func_label(r), if (exact) " (= " else " (\u2248 ",
+           paste(tolower(func_label(others)), collapse = ", "), ")")
+}), func_rep)
+
+keep_funcs <- func_site %>%
+  filter(Function %in% func_rep) %>%
+  group_by(Function) %>%
+  summarise(m = mean(share), .groups = "drop") %>%
+  filter(m >= heatmap_min) %>%
+  arrange(m) %>%
+  pull(Function)
+
+p_heat <- func_site %>%
+  filter(Function %in% keep_funcs) %>%
+  mutate(Function = factor(rep_label[Function], levels = rep_label[keep_funcs])) %>%
+  ggplot(aes(site, Function, fill = 100 * share)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = ifelse(share >= 0.001, sprintf("%.1f", 100 * share), "<0.1")), size = 3) +
+  scale_fill_gradient(low = "white", high = "#185563", name = "Reads (%)") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, colour = "black", face = "bold"),
+        axis.text.y = element_text(colour = "black"),
+        panel.grid = element_blank())
+p_heat
+
+save_fig(p_heat, "F1_faprotax_functions_per_site", width = 9, height = max(5, 0.3 * length(keep_funcs) + 2))
+
+# Identical nested functions merged in the heatmap
+merged <- rep_label[grepl("(=", rep_label, fixed = TRUE)]
+if (length(merged) > 0) message("Shown as one row (identical in every mat): ", paste(merged, collapse = "; "))
+```
+
+## 2.4 All functions per site (supplementary table)
+
+Every function found in the data (identical nested functions merged as in the heatmap), with the mean share of reads per site and over all mats. Includes the functions not shown in the heatmap.
+
+```{r all functions table}
+all_func_table <- func_site %>%
+  filter(Function %in% func_rep) %>%
+  mutate(share = round(100 * share, 2)) %>%
+  pivot_wider(names_from = site, values_from = share) %>%
+  left_join(func_long %>% group_by(Function) %>%
+              summarise(`All mats` = round(100 * mean(share, na.rm = TRUE), 2),
+                        `Mats present (%)` = round(100 * mean(share > 0), 0), .groups = "drop"),
+            by = "Function") %>%
+  mutate(ASVs = as.numeric(colSums(fn_matrix)[Function]),
+         `Shown in heatmap` = Function %in% keep_funcs,
+         Function = unname(rep_label[Function])) %>%
+  relocate(ASVs, .after = Function) %>%
+  arrange(desc(`All mats`))
+all_func_table
+
+save_tab(all_func_table, "T4_faprotax_all_functions_per_site")
+```
+
+## 2.5 Which taxa carry which functions
+
+FAPROTAX assigns functions to taxa, not to reads: every ASV whose name matches a FAPROTAX entry gets all functions of that entry. This section shows the result in two directions:
+
+- **T7 (taxon → functions):** every taxon that received at least one function, with the functions it was assigned and its share of the reads.
+- **T8 (function → taxa):** for each function in the heatmap, the taxa that make it up and the proportion of the function each one contributes (taxa that together make up 90% of the function; the full list is in the csv).
+- **T9:** the same per phylum (quick summary for the text).
+- **F4:** reads assigned to each function per site, split by phylum.
+
+Shares are mean relative abundances across mats (the same scale as the heatmap and T4), so the contributions of the taxa of one function add up to that function's "All mats" value in T4. Taxa without a genus are named after their lowest assigned rank ("Unclassified X (rank)"), as in script 6c.
+
+```{r taxa per function}
+ranks_tf <- intersect(c("Phylum", "Class", "Order", "Family", "Genus"), names(tax_clean))
+
+# tax_clean holds the names translated for FAPROTAX (fp_name_map, e.g. "Cyanobacteria"). For tables and
+# plots, translate them back to our SILVA names (e.g. "Cyanobacteriota"), so they match the other scripts
+# and phylum_colors.
+fp_name_back <- setNames(names(fp_name_map), unname(fp_name_map))
+tax_show <- tax_clean
+for (r in ranks_tf) {
+  hit <- tax_show[[r]] %in% names(fp_name_back)
+  tax_show[[r]][hit] <- fp_name_back[tax_show[[r]][hit]]
+}
+
+# Genus, or "Unclassified X (rank)" when the genus is unassigned
+taxon_label <- apply(tax_show[, ranks_tf, drop = FALSE], 1, function(x) {
+  if (x[["Genus"]] != "") return(x[["Genus"]])
+  k <- which(x != "")
+  if (length(k) == 0) return("Unclassified")
+  k <- max(k)
+  paste0("Unclassified ", x[[k]], " (", tolower(names(x)[k]), ")")
+})
+
+# Metabolic/ecological functions only (taxon-label groups such as "photosynthetic_cyanobacteria" left out)
+func_cols <- setdiff(colnames(fn_matrix), taxon_label_groups)
+
+# One row per ASV: taxonomy, mean share of reads per mat, and the list of functions it was assigned
+asv_tab <- tibble(ASV      = rownames(fn_matrix),
+                  Phylum   = tax_show[rownames(fn_matrix), "Phylum"],
+                  Class    = tax_show[rownames(fn_matrix), "Class"],
+                  Taxon    = unname(taxon_label[rownames(fn_matrix)]),
+                  mean_rel = unname(colMeans(rel)[rownames(fn_matrix)]),
+                  n_functions = rowSums(fn_matrix[, func_cols, drop = FALSE]),
+                  Functions = apply(fn_matrix[, func_cols, drop = FALSE], 1, function(r)
+                    paste(func_label(sort(func_cols[r == 1])), collapse = "; "))) %>%
+  mutate(Phylum = ifelse(Phylum == "", "Unidentified", Phylum))
+
+# ---- T7: taxon -> functions ----
+# ASVs of the same taxon with the same set of functions are combined. A taxon can appear more than once
+# if FAPROTAX gave its ASVs different functions (e.g. matches at species level).
+taxon_functions <- asv_tab %>%
+  filter(n_functions > 0) %>%
+  group_by(Phylum, Class, Taxon, Functions) %>%
+  summarise(ASVs = n(), reads_pct = 100 * sum(mean_rel), .groups = "drop") %>%
+  mutate(pct_of_assigned_reads = 100 * reads_pct / sum(reads_pct)) %>%
+  arrange(desc(reads_pct)) %>%
+  mutate(across(c(reads_pct, pct_of_assigned_reads), ~ round(.x, 2))) %>%
+  rename(`Reads (% of all reads)` = reads_pct,
+         `Reads (% of assigned reads)` = pct_of_assigned_reads) %>%
+  relocate(Functions, .after = last_col())
+
+message(nrow(taxon_functions), " taxa (", sum(taxon_functions$ASVs), " ASVs) were assigned at least one function")
+taxon_functions %>% print(n = 40, width = Inf)
+
+save_tab(taxon_functions, "T7_faprotax_taxa_and_their_functions")
+
+# ---- T8: function -> taxa ----
+taxa_funcs <- rev(keep_funcs)   # functions shown in the heatmap, most abundant first
+
+function_taxa <- lapply(taxa_funcs, function(fu) {
+  asv_tab[fn_matrix[asv_tab$ASV, fu] == 1, ] %>%
+    group_by(Phylum, Taxon) %>%
+    summarise(ASVs = n(), reads_pct = 100 * sum(mean_rel), .groups = "drop") %>%
+    mutate(Function = unname(rep_label[fu]),
+           pct_of_function = 100 * reads_pct / sum(reads_pct)) %>%
+    arrange(desc(reads_pct)) %>%
+    mutate(cumulative_pct = cumsum(pct_of_function))
+}) %>%
+  bind_rows() %>%
+  relocate(Function)
+
+# Main taxa: those that together make up 90% of each function (at least the top 3)
+function_taxa_main <- function_taxa %>%
+  group_by(Function) %>%
+  filter(lag(cumulative_pct, default = 0) < 90 | row_number() <= 3) %>%
+  ungroup() %>%
+  mutate(across(c(reads_pct, pct_of_function, cumulative_pct), ~ round(.x, 2))) %>%
+  rename(`Reads (% of all reads)` = reads_pct,
+         `% of function` = pct_of_function,
+         `Cumulative % of function` = cumulative_pct)
+function_taxa_main %>% print(n = Inf, width = Inf)
+
+save_tab(function_taxa_main, "T8_faprotax_main_taxa_per_function")
+write.csv(function_taxa %>% mutate(across(c(reads_pct, pct_of_function, cumulative_pct), ~ round(.x, 3))),
+          file.path(tab_dir, "T8_faprotax_all_taxa_per_function.csv"), row.names = FALSE)
+
+# ---- T9: function -> phyla ----
+function_phyla <- function_taxa %>%
+  group_by(Function, Phylum) %>%
+  summarise(ASVs = sum(ASVs),
+            `Reads (% of all reads)` = round(sum(reads_pct), 2),
+            `% of function` = round(sum(pct_of_function), 1), .groups = "drop") %>%
+  mutate(Function = factor(Function, levels = unname(rep_label[taxa_funcs]))) %>%
+  arrange(Function, desc(`% of function`)) %>%
+  mutate(Function = as.character(Function))
+function_phyla %>% print(n = Inf, width = Inf)
+
+save_tab(function_phyla, "T9_faprotax_phyla_per_function")
+```
+
+```{r function phyla plot, fig.width = 11, fig.height = 3 * ceiling(length(keep_funcs) / 3) + 1.5}
+# Mean share per site for every ASV, then summed per phylum for each function
+site_of  <- as.character(env$site[match(rownames(rel), env$sample_id)])
+rel_site <- rowsum(rel, site_of) / as.vector(table(site_of)[rownames(rowsum(rel, site_of))])
+
+phy_site <- lapply(taxa_funcs, function(fu) {
+  asvs <- intersect(rownames(fn_matrix)[fn_matrix[, fu] == 1], colnames(rel_site))
+  phy  <- tax_show[asvs, "Phylum"]
+  phy[phy == ""] <- "Unidentified"
+  as.data.frame(t(rowsum(t(rel_site[, asvs, drop = FALSE]), phy))) %>%
+    rownames_to_column("site") %>%
+    pivot_longer(-site, names_to = "Phylum", values_to = "share") %>%
+    mutate(Function = unname(rep_label[fu]))
+}) %>%
+  bind_rows() %>%
+  mutate(site     = factor(site, levels = site_levels),
+         Function = factor(Function, levels = unname(rep_label[taxa_funcs])))
+
+phyla_present <- phylum_levels(unique(phy_site$Phylum[phy_site$share > 0]))
+phy_site <- phy_site %>%
+  filter(Phylum %in% phyla_present) %>%
+  mutate(Phylum = factor(Phylum, levels = phyla_present))
+
+p_func_phyla <- ggplot(phy_site, aes(site, 100 * share, fill = Phylum)) +
+  geom_col() +
+  scale_fill_manual(values = phylum_palette(phyla_present), name = "Phylum") +
+  facet_wrap(~ Function, scales = "free_y", ncol = 3) +
+  labs(x = NULL, y = "Reads assigned to function (%)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_blank(), legend.position = "bottom")
+p_func_phyla
+
+save_fig(p_func_phyla, "F4_faprotax_function_phyla_per_site",
+         width = 11, height = 3 * ceiling(length(keep_funcs) / 3) + 1.5)
+```
+
+### Genera behind the main functions (F5)
+
+The functions of Figure 7A (the `genus_plot_n_funcs` most abundant), with each bar split by genus (the plot version of T8). Genera are coloured in shades of their phylum colour (same palette as F4 and the other scripts); genera contributing less than `genus_min_pct`% of a function are pooled as "Other taxa" (grey).
+
+```{r genus function plot, fig.width = 14, fig.height = 4 * ceiling(genus_plot_n_funcs / 2) + 1}
+fig7_funcs <- rev(tail(keep_funcs, genus_plot_n_funcs))   # keep_funcs is sorted from low to high
+fig7_title <- function(fu) if (fu %in% photo_functions) "Photoautotrophy" else func_label(fu)
+
+# Shades of one phylum colour for k genera (darker to lighter)
+phylum_shades <- function(col, k) {
+  if (k == 1) return(col)
+  dark  <- grDevices::colorRampPalette(c(col, "black"))(6)[2]
+  light <- grDevices::colorRampPalette(c(col, "white"))(6)[4]
+  grDevices::colorRampPalette(c(dark, col, light))(k)
+}
+
+genus_panel <- function(fu) {
+  asvs <- intersect(rownames(fn_matrix)[fn_matrix[, fu] == 1], colnames(rel_site))
+  tx   <- asv_tab[match(asvs, asv_tab$ASV), c("ASV", "Phylum", "Taxon")]
+  key  <- paste(tx$Phylum, tx$Taxon, sep = "||")
+
+  # Mean share per site for each taxon (genus or "Unclassified X (rank)")
+  site_tax <- as.data.frame(t(rowsum(t(rel_site[, tx$ASV, drop = FALSE]), key))) %>%
+    rownames_to_column("site") %>%
+    pivot_longer(-site, names_to = "key", values_to = "share") %>%
+    separate(key, into = c("Phylum", "Taxon"), sep = "\\|\\|")
+
+  # Contribution of each taxon to the function (all sites), and the taxa shown
+  contrib <- site_tax %>%
+    group_by(Phylum, Taxon) %>%
+    summarise(tot = sum(share), .groups = "drop") %>%
+    mutate(pct = 100 * tot / sum(tot)) %>%
+    arrange(desc(pct)) %>%
+    mutate(show = (pct >= genus_min_pct & row_number() <= genus_max) | row_number() == 1)
+
+  shown <- contrib %>% filter(show) %>%
+    mutate(Phylum = factor(Phylum, levels = phylum_levels(unique(Phylum)))) %>%
+    arrange(Phylum, desc(pct))
+
+  # Colours: shades of the phylum colour within each phylum, grey for the rest
+  phy_cols <- phylum_palette(levels(droplevels(shown$Phylum)))
+  pal <- unlist(lapply(names(phy_cols), function(ph) {
+    t_ph <- shown$Taxon[shown$Phylum == ph]
+    setNames(phylum_shades(phy_cols[[ph]], length(t_ph)), t_ph)
+  }))
+  has_other <- any(!contrib$show)
+  if (has_other) pal <- c(pal, "Other taxa" = "grey85")
+
+  d <- site_tax %>%
+    mutate(Taxon = ifelse(Taxon %in% shown$Taxon, Taxon, "Other taxa")) %>%
+    group_by(site, Taxon) %>%
+    summarise(share = sum(share), .groups = "drop") %>%
+    mutate(site  = factor(site, levels = site_levels),
+           Taxon = factor(Taxon, levels = names(pal)))
+
+  p <- ggplot(d, aes(site, 100 * share, fill = Taxon)) +
+    geom_col(width = 0.8, colour = "white", linewidth = 0.2) +
+    scale_fill_manual(values = pal, breaks = names(pal), name = NULL) +
+    labs(title = fig7_title(fu), x = NULL, y = "Reads (%)") +
+    theme(panel.grid = element_blank(),
+          plot.title = element_text(face = "bold", size = 11, hjust = 0.5),
+          axis.text.x = element_text(angle = 45, hjust = 1, colour = "black"),
+          legend.text = element_text(size = 8),
+          legend.key.size = unit(0.35, "cm"))
+  list(plot = p, phyla = as.character(unique(shown$Phylum)))
+}
+
+genus_panels <- lapply(fig7_funcs, genus_panel)
+
+# Phylum key (bottom): which colour family belongs to which phylum
+key_phyla <- phylum_levels(unique(unlist(lapply(genus_panels, `[[`, "phyla"))))
+key_df <- tibble(Phylum = factor(key_phyla, levels = key_phyla), x = seq_along(key_phyla))
+p_key <- ggplot(key_df, aes(x, 1)) +
+  geom_point(aes(colour = Phylum), shape = 15, size = 6, show.legend = FALSE) +
+  geom_text(aes(x = x + 0.12, label = Phylum), hjust = 0, size = 3.5) +
+  scale_colour_manual(values = phylum_palette(key_phyla)) +
+  scale_x_continuous(limits = c(0.8, length(key_phyla) + 1)) +
+  labs(title = "Phylum (colour family)") +
+  theme_void() +
+  theme(plot.title = element_text(size = 10, hjust = 0))
+
+p_genus_funcs <- wrap_plots(lapply(genus_panels, `[[`, "plot"), ncol = 2) / p_key +
+  plot_layout(heights = c(20, 1))
+p_genus_funcs
+
+save_fig(p_genus_funcs, "F5_faprotax_main_functions_genera_per_site",
+         width = 14, height = 4 * ceiling(genus_plot_n_funcs / 2) + 1)
+```
+
+
+#--------------------------
+
+# 3. Functions among sites and along the environmental gradients
+
+One beta regression per function and predictor (logit link). With `model_level = "site_mean"` the response is the mean share per site (n = 8); with `"sample"` it is the share per mat with a random intercept for site, because the predictors only vary between sites. Functions present in fewer than `min_prev_func` of the mats are not modelled. p-values are adjusted (BH) across all models of a group.
+
+## 3.1 Model helpers
+
+```{r model helpers}
+# Beta regression needs values strictly between 0 and 1 (Smithson & Verkuilen 2006)
+squeeze <- function(y) {
+  if (all(y > 0 & y < 1, na.rm = TRUE)) return(y)   # only needed with exact 0 or 1
+  n <- sum(!is.na(y))
+  (y * (n - 1) + 0.5) / n
+}
+# Back-transform fitted values to the original proportion scale (for plots)
+unsqueeze <- function(y, raw) {
+  if (all(raw > 0 & raw < 1, na.rm = TRUE)) return(y)
+  n <- sum(!is.na(raw))
+  (y * n - 0.5) / (n - 1)
+}
+
+# Functions available and frequent enough to model
+select_functions <- function(funcs) {
+  missing <- setdiff(funcs, all_functions)
+  if (length(missing) > 0) message("Not in the FAPROTAX output (no taxa with this function): ",
+                                   paste(missing, collapse = ", "))
+  funcs <- intersect(funcs, all_functions)
+  prev  <- colMeans(func_tab_model[funcs] > 0, na.rm = TRUE)
+  rare  <- names(prev)[prev < min_prev_func]
+  if (length(rare) > 0) message("Present in < ", 100 * min_prev_func, "% of mats, not modelled: ",
+                                paste(rare, collapse = ", "))
+  setdiff(funcs, rare)
+}
+
+fit_beta <- function(d, func, pred) {
+  f <- if (model_level == "sample") reformulate(c(pred, "(1 | site)"), response = func) else
+    reformulate(pred, response = func)
+  tryCatch(glmmTMB(f, data = d, family = beta_family(link = "logit")),
+           error = function(e) { warning(func, " ~ ", pred, ": ", conditionMessage(e)); NULL })
+}
+
+run_models <- function(funcs) {
+  mats  <- func_tab_model %>% select(sample_id, all_of(funcs)) %>% inner_join(env, by = "sample_id")
+  sites <- mats %>%
+    group_by(site) %>%
+    summarise(across(all_of(funcs), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
+    left_join(env_site, by = "site")
+  d_raw <- if (model_level == "sample") mats else sites
+  d     <- d_raw %>% mutate(across(all_of(funcs), squeeze))
+
+  grid <- expand.grid(func = funcs, pred = predictors, stringsAsFactors = FALSE)
+  res  <- lapply(seq_len(nrow(grid)), function(i) {
+    fu <- grid$func[i]; pr <- grid$pred[i]
+    keep   <- !is.na(d[[fu]]) & !is.na(d[[pr]])
+    dd     <- d[keep, ]
+    y_raw  <- d_raw[[fu]][keep]                       # original proportions (for the plot)
+    back   <- function(v) unsqueeze(v, d_raw[[fu]])
+    m  <- fit_beta(dd, fu, pr)
+    if (is.null(m)) return(NULL)
+
+    cf   <- summary(m)$coefficients$cond[pr, ]
+    disp <- tryCatch(testDispersion(simulateResiduals(m, plot = FALSE), plot = FALSE)$p.value,
+                     error = function(e) NA_real_)
+    r2   <- tryCatch(as.numeric(performance::r2(m)[[1]]), error = function(e) NA_real_)
+
+    nd <- data.frame(x = seq(min(dd[[pr]]), max(dd[[pr]]), length.out = 100))
+    names(nd) <- pr
+    if (model_level == "sample") nd$site <- NA
+    pl <- predict(m, newdata = nd, type = "link", se.fit = TRUE, re.form = NA)
+
+    list(table  = tibble(Function = fu, Predictor = pr, n = nrow(dd),
+                         Estimate = cf["Estimate"], SE = cf["Std. Error"],
+                         z = cf["z value"], p = cf["Pr(>|z|)"],
+                         pseudo_R2 = r2, dispersion_p = disp,
+                         converged = isTRUE(m$fit$convergence == 0) && isTRUE(m$sdr$pdHess)),
+         line   = tibble(Function = fu, Predictor = pr, x = nd[[pr]],
+                         fit = back(plogis(pl$fit)),
+                         lwr = back(plogis(pl$fit - 1.96 * pl$se.fit)),
+                         upr = back(plogis(pl$fit + 1.96 * pl$se.fit))),
+         points = tibble(Function = fu, Predictor = pr, site = dd$site,
+                         x = dd[[pr]], y = y_raw))
+  })
+  res <- res[!sapply(res, is.null)]
+
+  tab <- bind_rows(lapply(res, `[[`, "table")) %>%
+    mutate(p_adj = p.adjust(p, method = p_adj_method), .after = p)
+  sig <- tab %>% transmute(Function, Predictor, sig = p_adj < 0.05)
+
+  list(table  = tab,
+       lines  = bind_rows(lapply(res, `[[`, "line"))   %>% left_join(sig, by = c("Function", "Predictor")),
+       points = bind_rows(lapply(res, `[[`, "points")))
+}
+
+# Points (sites or mats), fitted line (blue = significant), 95% CI and R2 label; one panel per
+# function x predictor. Label as in the Hill-number regressions of script 2: "R² = 0.70*",
+# top right, * = significant (BH-adjusted p < 0.05), coloured like the line.
+model_plot <- function(mods, funcs) {
+  lv <- function(d) d %>% mutate(Function  = factor(Function, levels = funcs),
+                                 Predictor = factor(Predictor, levels = predictors))
+  lab_df <- lv(mods$table %>%
+                 transmute(Function, Predictor,
+                           sig   = as.character(p_adj < 0.05),
+                           label = paste0("R\u00b2 = ", sprintf("%.2f", pseudo_R2),
+                                          ifelse(p_adj < 0.05, "*", ""))))
+
+  ggplot(lv(mods$lines), aes(x = x)) +
+    geom_ribbon(aes(ymin = 100 * lwr, ymax = 100 * upr), fill = "grey80", alpha = 0.5) +
+    geom_line(aes(y = 100 * fit, colour = as.character(sig)), linewidth = 0.8) +
+    geom_point(data = lv(mods$points), aes(y = 100 * y, shape = site),
+               colour = "grey30", alpha = 0.7, size = 2.5, stroke = 0.8) +
+    geom_text(data = lab_df, aes(x = Inf, y = Inf, label = label, colour = sig),
+              hjust = 1.1, vjust = 1.5, size = 3.5, inherit.aes = FALSE) +
+    scale_colour_manual(values = sig_line_colours, guide = "none") +
+    scale_shape_manual(values = shape_sites, name = "Site") +
+    facet_grid(Function ~ Predictor, scales = "free",
+               labeller = labeller(Predictor = as_labeller(env_vars, label_parsed),
+                                   Function  = as_labeller(func_label))) +
+    labs(x = NULL, y = if (other_denominator == "non_cyanobacterial")
+      "Reads assigned to function (%; non-phototrophic functions: % of non-cyanobacterial reads)" else
+      "Reads assigned to function (%)") +
+    theme(legend.position = "bottom", panel.grid = element_blank(),
+          strip.text = element_text(face = "bold"))
+}
+
+format_table <- function(tab) {
+  tab %>%
+    mutate(Function = func_label(Function),
+           across(c(Estimate, SE, z, pseudo_R2), ~ round(.x, 3)),
+           across(c(p, p_adj, dispersion_p), ~ signif(.x, 3)))
+}
+```
+
+## 3.2 Differences among sites
+
+Kruskal–Wallis test per function on the share per mat (all reads, as in the heatmap), followed by Dunn tests with BH correction where the Kruskal–Wallis test is significant (as for alpha diversity in script 2).
+
+```{r site differences}
+site_funcs <- intersect(c(energy_functions, nitrogen_functions), all_functions)
+site_data  <- func_tab %>% select(sample_id, all_of(site_funcs)) %>%
+  inner_join(env %>% select(sample_id, site), by = "sample_id")
+
+kw_table <- lapply(site_funcs, function(fu) {
+  kw <- kruskal.test(site_data[[fu]] ~ site_data$site)
+  tibble(Function = func_label(fu), chi2 = round(unname(kw$statistic), 2),
+         df = unname(kw$parameter), p = signif(kw$p.value, 3))
+}) %>% bind_rows() %>%
+  mutate(p_adj = signif(p.adjust(p, method = p_adj_method), 3))
+kw_table
+
+dunn_table <- lapply(site_funcs[kw_table$p_adj < 0.05], function(fu) {
+  invisible(capture.output(   # dunn.test prints to the console; keep the html clean
+    dt <- suppressWarnings(dunn.test::dunn.test(site_data[[fu]], site_data$site,
+                                                method = "bh", altp = TRUE, kw = FALSE, table = FALSE))))
+  tibble(Function = func_label(fu), Comparison = dt$comparisons,
+         Z = round(dt$Z, 2), p_adj = signif(dt$altP.adjusted, 3))
+}) %>% bind_rows()
+if (nrow(dunn_table) > 0) dunn_table %>% filter(p_adj < 0.05)
+
+save_tab(kw_table, "T5_functions_site_differences_KW")
+if (nrow(dunn_table) > 0) save_tab(dunn_table, "T6_functions_site_differences_Dunn")
+```
+
+## 3.3 Energy sources vs environment: phototrophs and heterotrophs
+
+Photoautotrophy and chemoheterotrophy are both shares of the same reads, so they are not independent: when phototrophs make up more of a mat, heterotrophs necessarily make up less. Read the two models together as one shift in the phototroph–heterotroph balance.
+
+```{r energy models}
+energy_funcs  <- select_functions(energy_functions)
+energy_models <- run_models(energy_funcs)
+energy_table  <- format_table(energy_models$table)
+energy_table
+
+save_tab(energy_table, "T2_energy_functions_models")
+```
+
+```{r energy model plot, fig.width = 11, fig.height = 2.2 * length(energy_funcs) + 2}
+p_energy <- model_plot(energy_models, energy_funcs)
+p_energy
+save_fig(p_energy, "F2_energy_functions_vs_environment", width = 11, height = 2.2 * length(energy_funcs) + 2)
+```
+
+## 3.4 Nitrogen cycling vs environment
+
+```{r nitrogen models}
+nitrogen_funcs  <- select_functions(nitrogen_functions)
+nitrogen_models <- run_models(nitrogen_funcs)
+nitrogen_table  <- format_table(nitrogen_models$table)
+nitrogen_table
+
+save_tab(nitrogen_table, "T3_nitrogen_functions_models")
+```
+
+```{r nitrogen model plot, fig.width = 11, fig.height = 2.2 * length(nitrogen_funcs) + 2}
+p_nitrogen <- model_plot(nitrogen_models, nitrogen_funcs)
+p_nitrogen
+save_fig(p_nitrogen, "F3_nitrogen_functions_vs_environment", width = 11, height = 2.2 * length(nitrogen_funcs) + 2)
+```
+
+Panel labels: pseudo-R² of the beta regression; * = significant after BH correction (adjusted p < 0.05), as in the Hill-number regressions of script 2.
+
+Model checks: `dispersion_p` < 0.05 indicates over- or underdispersion (DHARMa); `converged = FALSE` means the fit should not be interpreted. With n = 8 sites the tests have low power, so non-significant results do not show the absence of a relationship.
+
+#--------------------------
+
+# 4. Methods text
+
+> The functional potential of the mat communities was predicted from taxonomy with FAPROTAX (Louca et al., 2016), as implemented in the R package microeco (Liu et al., 2021). FAPROTAX assigns taxa to metabolic and ecological functions based on the literature on cultured representatives; the results therefore describe the relative abundance of taxa with a given functional potential, not measured activity. Functions are not mutually exclusive and can be nested (e.g., oxygenic photoautotrophy within phototrophy); nested functions with identical values in all mats were reported once. Because FAPROTAX uses older names for some groups (e.g., Cyanobacteria and Cyanobacteriia), the corresponding SILVA 138.2 names (Cyanobacteriota and Cyanophyceae) were translated before annotation. For each mat, the proportion of reads belonging to taxa assigned to each function was calculated`r if (other_denominator == "non_cyanobacterial") "; for the models, non-phototrophic functions were expressed relative to the reads not belonging to photosynthetic cyanobacteria, so that their variation was not driven by changes in cyanobacterial dominance" else ""`. On average `r round(100 * mean(coverage$assigned), 1)`% of reads could be assigned to at least one function. `r if (model_level == "site_mean") "Proportions were averaged per site, and associations" else "Associations"` between selected energy-metabolism and nitrogen-cycling functions and DIN, PO₄³⁻, temperature and chlorophyll-a were tested with beta regressions (logit link; glmmTMB, Brooks et al., 2017)`r if (model_level == "sample") " with a random intercept for site" else ""` (proportions containing exact zeros or ones were transformed following Smithson & Verkuilen, 2006). Differences among sites were tested with Kruskal–Wallis tests followed by Dunn's post hoc tests (BH-adjusted). Functions present in fewer than `r round(100 * min_prev_func)`% of mats were not modelled. Model fit was checked with simulated residuals (DHARMa; Hartig, 2022), and p-values were adjusted with the Benjamini–Hochberg procedure within each group of functions.

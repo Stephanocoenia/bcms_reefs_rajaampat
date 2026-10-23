@@ -1,0 +1,9 @@
+"Function","Predictor","n","Estimate","SE","z","p","p_adj","pseudo_R2","dispersion_p","converged"
+"Aerobic ammonia oxidation","DIN",8,0.078,0.023,3.376,0.000736,0.00589,0.341,0.792,TRUE
+"Nitrate reduction","DIN",8,0.009,0.031,0.294,0.769,0.967,0.012,0.352,TRUE
+"Aerobic ammonia oxidation","mean.PO4",8,3.102,7.265,0.427,0.669,0.967,0.038,0.544,TRUE
+"Nitrate reduction","mean.PO4",8,-6.787,8.328,-0.815,0.415,0.967,0.084,0.432,TRUE
+"Aerobic ammonia oxidation","temperature",8,0.13,0.668,0.194,0.846,0.967,0.005,0.528,TRUE
+"Nitrate reduction","temperature",8,-0.672,0.421,-1.596,0.11,0.442,0.378,0.248,TRUE
+"Aerobic ammonia oxidation","chla",8,0.066,0.246,0.268,0.789,0.967,0.015,0.544,TRUE
+"Nitrate reduction","chla",8,-0.002,0.246,-0.008,0.994,0.994,0,0.4,TRUE

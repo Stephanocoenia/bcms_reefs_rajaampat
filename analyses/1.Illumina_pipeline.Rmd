@@ -1,0 +1,569 @@
+---
+title: "1. DADA2 pipeline: Illumina 16S reads of BCMs and sediments"
+author: "Thomas Kemenes, Stephanie Martinez, Agustin Capriati"
+date: "2024-04-17"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+# Aim
+
+Process the Illumina MiSeq 16S rRNA (V4-V5) reads of the benthic cyanobacterial mats (BCMs) and sediments collected in Raja Ampat in 2023, from raw reads to a decontaminated phyloseq object, and save the reef BCM subset used in the following scripts.
+
+Workflow (adjusted from the DADA2 tutorial, <https://benjjneb.github.io/dada2/tutorial.html>):
+
+1. Read check and sample names.
+2. Quality profiles, primer removal, filtering and trimming.
+3. Error models.
+4. Denoising and merging of forward and reverse reads.
+5. Chimera removal.
+6. Reads tracked through the pipeline.
+7. Taxonomy (CyanoSeq + SILVA) and species (SILVA, exact matches).
+8. Master ASV table of this run.
+9. ASV cleaning (non-target taxa, amplicon length).
+10. Phyloseq object.
+11. Decontamination (decontam, frequency method) and removal of samples with fewer than `min_reads` reads.
+12. Final phyloseq of all samples.
+13. Reef BCM subset.
+
+Outputs are numbered in the order they are produced:
+
+- Figures: `figures/1.pipeline/F<n>_<name>.pdf`
+- Tables: `outputs/1.pipeline/T<n>_<name>.docx` (+ `.csv`)
+- Checkpoints of the slow steps: `outputs/1.pipeline/rds/<step>.rds` (read back instead of recalculated unless `rerun_steps <- TRUE`)
+- Data products: master ASV table, phyloseq of all samples and phyloseq of the reef BCMs (paths in Settings)
+
+Raw file names from the sequencing laboratory are long. They were shortened beforehand with *"analyses/file_rename.R"*. If the files are already renamed, start here.
+
+# Setup
+
+```{r setup, echo=FALSE, warning=FALSE}
+# Only the packages used in this script are loaded.
+# plyr is NOT loaded: attached after dplyr it masks summarise()/mutate() and ignores group_by().
+packages_used <- c("dada2", "phyloseq", "decontam", "dplyr", "tidyr", "tibble",
+                   "ggplot2", "patchwork", "flextable", "officer", "beepr")
+
+suppressMessages(invisible(lapply(packages_used, library, character.only = TRUE)))
+
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) message("All packages loaded correctly") else
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+rm(packages_used, missing_pkgs)
+
+theme_set(theme_bw())
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+set_flextable_defaults(theme_fun = theme_vanilla, font.size = 10, bold_header = TRUE)
+
+fig_dir <- "figures/1.pipeline"
+tab_dir <- "outputs/1.pipeline"
+rds_dir <- "outputs/1.pipeline/rds"
+for (d in c(fig_dir, tab_dir, rds_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Settings
+
+```{r settings}
+# ---- Input ----
+raw_dir       <- "data/sequences_renamed"               # renamed raw reads
+pattern_F     <- "_R1.filt.fastq.gz"                    # forward reads, e.g. e1100058918_Cyano114_R1.filt.fastq.gz
+pattern_R     <- "_R2.filt.fastq.gz"                    # reverse reads
+filt_dir      <- "data/filtered_sequences_bcm&sed"      # filtered reads are written here
+taxonomy_db   <- "data/taxonomy/CyanoSeq_1.1.2_SILVA138.1_dada2.fastq.gz"   # CyanoSeq (Lefler et al. 2023)
+species_db    <- "data/taxonomy/silva_species_assignment_v138.1.fa.gz"
+metadata_file <- "data/metadata_all_combined.csv"
+# Combined master table (this run + Lease's samples), input of section 9.
+# It is a separate file from master_file below (made outside this script), separated by ";".
+master_file_all <- "data/ASV_taxonomy_spp_seq_all.csv"
+master_sep      <- ";"
+
+# ---- Data products ----
+master_file <- "data/ASV_taxonomy_spp_seq_table.csv"   # master table of this run (section 8)
+all_file    <- "data/rds/bcms&sed_all.rds"             # all samples, decontaminated (section 12)
+reef_file   <- "data/bcms_reefs_raja2023.rds"          # reef BCMs (section 13)
+
+# ---- DADA2 parameters (Methods 2.3) ----
+trunc_len   <- c(280, 210)   # from the quality profiles (F1, F2)
+trim_left   <- c(19, 20)     # primer lengths: 515F-Y = 19 bp, 926R = 20 bp
+max_ee      <- c(2, 2)
+min_overlap <- 20            # mergePairs default is 12
+multithread_filter <- FALSE  # filterAndTrim: FALSE on Windows
+multithread        <- TRUE   # learnErrors, dada, removeBimeraDenovo, assignTaxonomy
+
+# ---- ASV and sample filters (Methods 2.3 and 2.4) ----
+tax_ranks  <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+len_range  <- c(350, 390)    # expected amplicon length 371 bp (Parada et al. 2016)
+conc_col   <- "pcr2_concentration_nM"   # DNA concentration used by decontam
+min_reads  <- 10000          # samples with fewer reads are removed after decontamination
+low_reads  <- 3000           # only reported (T3)
+
+# Extraction and PCR controls (sample IDs)
+negative_samples <- c("BCMEC1", "BCMEC10", "BCMEC4", "BCMEC5", "BCMEC7", "BCMEC9",
+                      "BCMPCR1", "BCMPCR1.1", "BCMPCR2", "BCMSEDPCR1", "ExtrCon8", "negcontrol")
+bad_samples       <- c("Cyano140", "BCM104")   # outliers or very low reads, removed from all samples
+bad_samples_reefs <- c("BCM070")               # removed from the reef dataset only (section 13)
+
+# ---- Reef subset (section 13) ----
+reef_areas         <- c("dampier", "misool")
+exclude_origin     <- c("sed")
+exclude_mat_colors <- c("green_al", "white")
+
+# ---- Reproducibility and checkpoints ----
+seed               <- 2023   # random subsets for quality plots, error models and decontam plot
+quality_n          <- 20     # samples shown in the quality profiles
+species_batch_size <- 12480  # addSpecies is run in batches of ASVs because of memory limits
+rerun_steps        <- FALSE  # FALSE: read the checkpoints in rds_dir if they exist
+```
+
+## Output helpers
+
+```{r output helpers}
+# Same helpers as in the other scripts
+save_fig <- function(plot, name, width = 11, height = 11) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), plot = plot,
+         device = cairo_pdf, width = width, height = height, units = "in")
+}
+
+save_tab <- function(table, name) {
+  doc <- read_docx() %>% body_add_flextable(autofit(flextable(table)))
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  write.csv(table, file.path(tab_dir, paste0(name, ".csv")), row.names = FALSE)
+}
+
+# Run a slow step once and save it; afterwards read it back (as refit_models in scripts 6)
+run_or_load <- function(name, expr) {
+  path <- file.path(rds_dir, paste0(name, ".rds"))
+  if (!rerun_steps && file.exists(path)) {
+    message("Read from checkpoint: ", path)
+    return(readRDS(path))
+  }
+  x <- expr
+  saveRDS(x, path)
+  x
+}
+
+# File-based name (e.g. "e1100058918_Cyano114_R1") -> sample ID ("Cyano114").
+# make.names() gives the same names as the column names after read.csv() in the earlier version
+# (e.g. a duplicated name gets ".1"), so the IDs match the metadata.
+file_to_sample_id <- function(x) {
+  x <- make.names(x, unique = TRUE)
+  vapply(strsplit(x, "_"), function(p) paste(p[-c(1, 3)], collapse = "_"), character(1))
+}
+```
+
+## Reuse checkpoints of the earlier version (run once, optional)
+
+The earlier version saved its intermediate objects in `outputs/` and `data/`. This chunk copies them to `rds_dir` under the new names, so DADA2 and the species assignment do not have to be run again.
+
+```{r reuse old checkpoints, eval=FALSE}
+old_new <- c("outputs/out.rds"           = "filter_and_trim",
+             "outputs/errF.rds"          = "err_f",
+             "outputs/errR.rds"          = "err_r",
+             "outputs/dadaFs.rds"        = "dada_fs",
+             "outputs/dadaRs.rds"        = "dada_rs",
+             "outputs/mergers.rds"       = "mergers",
+             "outputs/seqtab_nochim.rds" = "seqtab_nochim",
+             "data/taxa_assigned.rds"    = "taxa_genus")
+file.copy(names(old_new), file.path(rds_dir, paste0(old_new, ".rds")))
+
+# Species batches: the old csv files have no sequences, but are in the same order as taxa_genus
+taxa_old <- readRDS("data/taxa_assigned.rds")
+sp_old <- do.call(rbind, lapply(sprintf("outputs/Taxonomy_spp_table_%d.csv", 1:10),
+                                function(f) as.matrix(read.csv(f)[, -1])))
+stopifnot(nrow(sp_old) == nrow(taxa_old))
+rownames(sp_old) <- rownames(taxa_old)
+old_batches <- split(seq_len(nrow(sp_old)), ceiling(seq_len(nrow(sp_old)) / species_batch_size))
+for (i in seq_along(old_batches))
+  saveRDS(sp_old[old_batches[[i]], , drop = FALSE],
+          file.path(rds_dir, sprintf("taxa_species_batch_%02d.rds", i)))
+rm(taxa_old, sp_old, old_batches, old_new)
+```
+
+#--------------------------
+
+# 1. Reads check
+
+```{r reads check}
+fn_fs <- sort(list.files(raw_dir, pattern = pattern_F, full.names = TRUE))
+fn_rs <- sort(list.files(raw_dir, pattern = pattern_R, full.names = TRUE))
+
+# Forward and reverse files must pair up
+stopifnot(length(fn_fs) == length(fn_rs),
+          identical(sub("_R1", "", basename(fn_fs)), sub("_R2", "", basename(fn_rs))))
+
+# File-based sample names (first three parts of the file name, e.g. "e1100058918_Cyano114_R1")
+sample_names_raw <- gsub(".*/([^/_]*_[^/_]*_[^/_]*).*", "\\1", fn_fs)
+stopifnot(!anyDuplicated(sample_names_raw))
+message(length(fn_fs), " samples (forward + reverse files)")
+```
+
+# 2. Quality and filtering
+
+```{r quality profiles}
+set.seed(seed)
+quality_set <- sample(seq_along(fn_fs), size = min(quality_n, length(fn_fs)))
+
+# Truncate where the quality drops below ~30 (forward 280, reverse 210)
+p_quality_f <- plotQualityProfile(fn_fs[quality_set])
+p_quality_r <- plotQualityProfile(fn_rs[quality_set])
+p_quality_f
+p_quality_r
+save_fig(p_quality_f, "F1_quality_forward", width = 10, height = 8)
+save_fig(p_quality_r, "F2_quality_reverse", width = 10, height = 8)
+
+# Mean quality score per file, weighted by the number of reads with each score
+quality_scores <- bind_rows(Forward = p_quality_f$data, Reverse = p_quality_r$data, .id = "Read") %>%
+  group_by(Read, File = file) %>%
+  summarise(Mean_score = weighted.mean(Score, Count),
+            SD_score   = sqrt(sum(Count * (Score - Mean_score)^2) / sum(Count)),
+            .groups = "drop") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+save_tab(quality_scores, "T1_quality_scores")
+```
+
+```{r filter and trim}
+filt_fs <- file.path(filt_dir, paste0(sample_names_raw, "_F_filt.fastq.gz"))
+filt_rs <- file.path(filt_dir, paste0(sample_names_raw, "_R_filt.fastq.gz"))
+names(filt_fs) <- sample_names_raw
+names(filt_rs) <- sample_names_raw
+
+# trimLeft removes the primers; truncLen comes from the quality profiles; see ?filterAndTrim
+filter_counts <- run_or_load("filter_and_trim",
+  filterAndTrim(fn_fs, filt_fs, fn_rs, filt_rs,
+                truncLen = trunc_len, trimLeft = trim_left,
+                maxN = 0, maxEE = max_ee, truncQ = 2, rm.phix = TRUE,
+                compress = TRUE, multithread = multithread_filter))
+
+# Raw read pairs (forward and reverse files have the same number of reads)
+message(format(sum(filter_counts[, "reads.in"]), big.mark = ","), " raw read pairs; ",
+        format(sum(filter_counts[, "reads.out"]), big.mark = ","), " after filtering")
+
+# Samples without reads after filtering have no filtered file and are left out
+has_reads <- file.exists(filt_fs)
+if (any(!has_reads)) message("No reads after filtering: ", paste(names(filt_fs)[!has_reads], collapse = ", "))
+filt_fs <- filt_fs[has_reads]
+filt_rs <- filt_rs[has_reads]
+```
+
+# 3. Error models
+
+DADA2 learns the error rates from the first samples it reads, so the controls are left out and the other samples are shuffled.
+
+```{r error models}
+err_set <- names(filt_fs)[!file_to_sample_id(names(filt_fs)) %in% negative_samples]
+set.seed(seed)
+err_set <- sample(err_set)
+
+err_f <- run_or_load("err_f", learnErrors(filt_fs[err_set], multithread = multithread))
+err_r <- run_or_load("err_r", learnErrors(filt_rs[err_set], multithread = multithread))
+
+# The black line (fitted error rates) should follow the points, and decrease with quality
+# (https://github.com/benjjneb/dada2/issues/1166)
+p_errors <- plotErrors(err_f, nominalQ = TRUE) / plotErrors(err_r, nominalQ = TRUE) +
+  plot_annotation(tag_levels = "A",
+                  title = "Error rates of the forward (A) and reverse (B) reads")
+p_errors
+save_fig(p_errors, "F3_error_models", width = 11, height = 16)
+```
+
+# 4. Denoising and merging
+
+```{r denoise and merge}
+dada_fs <- run_or_load("dada_fs", dada(filt_fs, err = err_f, multithread = multithread))
+dada_rs <- run_or_load("dada_rs", dada(filt_rs, err = err_r, multithread = multithread))
+dada_fs[[1]]
+
+mergers <- run_or_load("mergers",
+  mergePairs(dada_fs, filt_fs, dada_rs, filt_rs, minOverlap = min_overlap, verbose = TRUE))
+
+seqtab <- makeSequenceTable(mergers)
+message(nrow(seqtab), " samples, ", ncol(seqtab), " merged sequences")
+
+# Length of the merged sequences (expected ~371 bp; dashed lines = range kept in section 9)
+p_lengths <- tibble(length = nchar(getSequences(seqtab))) %>%
+  ggplot(aes(length)) +
+  geom_histogram(binwidth = 5, fill = "grey60") +
+  geom_vline(xintercept = len_range, linetype = 2) +
+  labs(x = "Merged sequence length (bp)", y = "Number of sequences")
+p_lengths
+save_fig(p_lengths, "F4_merged_length", width = 6, height = 4)
+beep(2)
+```
+
+# 5. Chimeras
+
+The error model does not include chimeras. Chimeric sequences are removed by comparing each sequence with the others in the table and removing those that can be reproduced by joining two more abundant sequences (DADA2). Usually no more than ~10% of the reads are lost.
+
+```{r chimeras}
+seqtab_nochim <- run_or_load("seqtab_nochim",
+  removeBimeraDenovo(seqtab, method = "consensus", multithread = multithread, verbose = TRUE))
+
+message(ncol(seqtab) - ncol(seqtab_nochim), " of ", ncol(seqtab), " sequences were chimeras; ",
+        round(100 * sum(seqtab_nochim) / sum(seqtab), 1), "% of the reads kept")
+```
+
+# 6. Reads table
+
+```{r reads table}
+get_n <- function(x) sum(getUniques(x))
+
+track <- tibble(File       = sample_names_raw,
+                Sample     = file_to_sample_id(sample_names_raw),
+                Input      = filter_counts[, "reads.in"],
+                Filtered   = filter_counts[, "reads.out"],
+                Denoised_F = sapply(dada_fs, get_n)[sample_names_raw],
+                Denoised_R = sapply(dada_rs, get_n)[sample_names_raw],
+                Merged     = sapply(mergers, get_n)[sample_names_raw],
+                Nonchim    = rowSums(seqtab_nochim)[sample_names_raw]) %>%
+  mutate(across(Denoised_F:Nonchim, ~ replace_na(.x, 0)))
+head(track)
+save_tab(track, "T2_reads_tracked")
+
+# Reads per sample after chimera removal
+p_reads <- ggplot(track, aes(x = Sample, y = Nonchim)) +
+  geom_point() +
+  geom_hline(aes(yintercept = min_reads, colour = "Minimum reads"), linewidth = 1) +
+  geom_hline(aes(yintercept = low_reads, colour = "Low reads"), linewidth = 1) +
+  scale_colour_manual(name = "Threshold",
+                      values = c("Minimum reads" = "#4DBBD5FF", "Low reads" = "#E64B35FF"),
+                      labels = c("Minimum reads" = format(min_reads, big.mark = ","),
+                                 "Low reads" = format(low_reads, big.mark = ","))) +
+  labs(x = "Samples", y = "Number of reads") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+p_reads
+save_fig(p_reads, "F5_reads_per_sample", width = 11, height = 8)
+
+# How many samples have few reads? (samples < min_reads are removed in section 11)
+reads_summary <- track %>%
+  summarise(Samples         = n(),
+            Below_low_reads = sum(Nonchim < low_reads),
+            Below_min_reads = sum(Nonchim < min_reads),
+            Between         = sum(Nonchim >= low_reads & Nonchim < min_reads))
+reads_summary
+save_tab(reads_summary, "T3_samples_low_reads")
+```
+
+# 7. Taxonomy assignment
+
+Genus level with CyanoSeq + SILVA; species with SILVA (exact matches only). `addSpecies` is run in batches of ASVs because of memory limits; each batch is saved, so an interrupted run continues where it stopped.
+
+```{r taxonomy}
+taxa <- run_or_load("taxa_genus",
+  assignTaxonomy(seqtab_nochim, taxonomy_db, multithread = multithread))
+beep(2)
+
+batches <- split(seq_len(nrow(taxa)), ceiling(seq_len(nrow(taxa)) / species_batch_size))
+batch_files <- file.path(rds_dir, sprintf("taxa_species_batch_%02d.rds", seq_along(batches)))
+for (i in seq_along(batches)) {
+  if (!rerun_steps && file.exists(batch_files[i])) next
+  saveRDS(addSpecies(taxa[batches[[i]], , drop = FALSE], species_db), batch_files[i])
+  gc()
+  message("Species batch ", i, " of ", length(batches), " done")
+}
+taxa_species <- do.call(rbind, lapply(batch_files, readRDS))
+stopifnot(identical(rownames(taxa_species), rownames(taxa)))   # same ASVs, same order
+beep(5)
+```
+
+# 8. Master ASV table
+
+Sequences, taxonomy and reads per sample, with the sample IDs as column names (e.g. "Cyano114").
+
+```{r master table}
+counts_t <- t(seqtab_nochim)
+colnames(counts_t) <- file_to_sample_id(colnames(counts_t))
+
+asv_master <- data.frame(Sequence = rownames(taxa_species), taxa_species,
+                         counts_t[rownames(taxa_species), , drop = FALSE],
+                         check.names = FALSE, row.names = NULL)
+write.csv(asv_master, master_file, row.names = FALSE)
+rm(counts_t)
+```
+
+# 9. ASV cleaning
+
+Starts from the combined master table (`master_file_all`).
+
+```{r read master}
+asv_table <- read.csv(master_file_all, sep = master_sep)
+if ("X.1" %in% names(asv_table)) asv_table <- select(asv_table, -X.1)   # extra row-number column in Lease's export
+names(asv_table)[1] <- "Sequence"
+stopifnot(all(grepl("^[ACGTN]+$", head(asv_table$Sequence))))           # first column holds the sequences
+
+# Sample columns = everything except the sequence and the taxonomy
+sample_cols <- setdiff(names(asv_table), c("Sequence", tax_ranks))
+stopifnot(all(tax_ranks %in% names(asv_table)),
+          all(vapply(asv_table[sample_cols], is.numeric, logical(1))))
+message(length(sample_cols), " samples, ", nrow(asv_table), " ASVs")
+
+samples_meta <- read.csv(metadata_file)
+samples_meta$Negative <- if_else(samples_meta$sample_id %in% negative_samples, "yes", "no")
+```
+
+```{r filter asvs}
+step_log <- function(df, step) tibble(Step = step, ASVs = nrow(df), Reads = sum(as.matrix(df[sample_cols])))
+asv_steps <- step_log(asv_table, "Master table")
+
+# Non-target sequences (rows with an empty rank are kept)
+asv_table <- asv_table %>%
+  filter(!Kingdom %in% "Eukaryota", !Family %in% "Mitochondria", !Order %in% "Chloroplast")
+asv_steps <- bind_rows(asv_steps, step_log(asv_table, "Eukaryota, mitochondria and chloroplasts removed"))
+
+# Target amplicon length (expected 371 bp)
+asv_table <- asv_table %>% filter(between(nchar(Sequence), len_range[1], len_range[2]))
+asv_steps <- bind_rows(asv_steps, step_log(asv_table,
+                       paste0("Length ", len_range[1], "-", len_range[2], " bp")))
+asv_steps
+```
+
+# 10. Phyloseq
+
+```{r phyloseq data}
+# ASV names are given here, after the filters, so they match the rest of the analyses
+asv_table$ASV <- paste0("ASV", seq_len(nrow(asv_table)))
+rownames(asv_table) <- asv_table$ASV
+
+taxa_matrix <- asv_table[, sample_cols]
+taxa_matrix <- taxa_matrix[rowSums(taxa_matrix) > 0, ]   # ASVs with reads in at least one sample
+
+# Samples left out: no reads, outliers / very low reads, controls
+empties    <- names(which(colSums(taxa_matrix) == 0))
+filter_out <- unique(c(empties, bad_samples, negative_samples))
+message("Samples without reads: ", if (length(empties)) paste(empties, collapse = ", ") else "none")
+
+asv_mat <- as.matrix(taxa_matrix[, !colnames(taxa_matrix) %in% filter_out])
+tax_mat <- as.matrix(asv_table[rownames(asv_mat), tax_ranks])   # matched by ASV name
+
+# Metadata of the samples in the community table, with a DNA concentration for decontam
+samples_meta <- samples_meta %>%
+  filter(!sample_id %in% filter_out, sample_id %in% colnames(asv_mat))
+no_conc <- samples_meta$sample_id[is.na(samples_meta[[conc_col]])]
+if (length(no_conc)) message("Removed, no ", conc_col, ": ", paste(no_conc, collapse = ", "))
+samples_meta <- samples_meta %>% filter(!is.na(.data[[conc_col]]))
+rownames(samples_meta) <- samples_meta$sample_id
+```
+
+## 10.1 Phyloseq object
+
+```{r create phyloseq}
+bcms_sed <- phyloseq(otu_table(asv_mat, taxa_are_rows = TRUE),
+                     tax_table(tax_mat),
+                     sample_data(samples_meta))
+bcms_sed
+```
+
+# 11. Decontamination
+
+Contaminants are identified with the frequency method of decontam (Davis et al. 2018): the frequency of a contaminant ASV decreases with the DNA concentration of the sample (here after the second PCR). <https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-018-0605-2>
+
+```{r decontamination}
+contam <- isContaminant(bcms_sed, method = "frequency", conc = conc_col)
+message(sum(contam$contaminant), " of ", nrow(contam), " ASVs identified as contaminants")
+
+# One ASV that is not a contaminant (the first) and up to five contaminants
+set.seed(seed)
+show_taxa <- c(taxa_names(bcms_sed)[1],
+               head(sample(taxa_names(bcms_sed)[contam$contaminant]), 5))
+p_contam <- plot_frequency(bcms_sed, show_taxa, conc = conc_col) +
+  xlab("DNA concentration (nM)")
+p_contam
+save_fig(p_contam, "F6_contaminant_frequency", width = 8, height = 11)
+
+contaminants <- contam %>%
+  rownames_to_column("ASV") %>%
+  filter(contaminant) %>%
+  select(ASV, freq, prev, p) %>%
+  left_join(as.data.frame(tax_mat) %>% rownames_to_column("ASV"), by = "ASV")
+save_tab(contaminants, "T4_contaminant_asvs")
+
+bcms_sed_noncontam <- prune_taxa(!contam$contaminant, bcms_sed)
+stopifnot(!any(sample_names(bcms_sed_noncontam) %in% negative_samples))   # controls were removed in section 10
+
+# Samples with fewer than min_reads reads
+low_samples <- names(which(sample_sums(bcms_sed_noncontam) < min_reads))
+low_samples_tab <- as(sample_data(bcms_sed_noncontam), "data.frame")[low_samples, , drop = FALSE] %>%
+  mutate(Reads = sample_sums(bcms_sed_noncontam)[low_samples])
+low_samples_tab   # check here whether any reef mats are removed
+bcms_sed_final <- prune_samples(!sample_names(bcms_sed_noncontam) %in% low_samples, bcms_sed_noncontam)
+beep(2)
+```
+
+Reads per sample after decontamination (A) and after removing samples with fewer than `min_reads` reads (B).
+
+```{r plots decontam}
+reads_noncontam <- tibble(Sample = sample_names(bcms_sed_noncontam), Reads = sample_sums(bcms_sed_noncontam))
+reads_final     <- tibble(Sample = sample_names(bcms_sed_final),     Reads = sample_sums(bcms_sed_final))
+
+p_hist_decon <- ggplot(reads_noncontam, aes(x = Reads)) +
+  geom_histogram(bins = 20, fill = "grey") +
+  labs(x = "Reads", y = "Number of samples", title = "A. Distribution of reads")
+
+p_scatt_decon <- ggplot(reads_final, aes(x = Sample, y = Reads)) +
+  geom_point() +
+  geom_hline(aes(yintercept = min_reads, colour = "Minimum reads"), linewidth = 1) +
+  scale_colour_manual(name = "Threshold", values = c("Minimum reads" = "#4DBBD5FF"),
+                      labels = format(min_reads, big.mark = ",")) +
+  labs(x = "Samples", y = "Reads", title = "B. Reads per sample") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+p_decon <- (p_hist_decon / p_scatt_decon) +
+  plot_annotation(title = "Samples after PCR decontamination")
+p_decon
+save_fig(p_decon, "F7_reads_decontaminated", width = 11, height = 11)
+
+total_reads <- sum(sample_sums(bcms_sed_final))
+```
+
+Reads after filtering and decontamination: `r format(total_reads, big.mark = ",")`.
+
+```{r asv steps table}
+asv_steps <- bind_rows(asv_steps,
+  tibble(Step = "Phyloseq (controls, outliers and samples without concentration removed)",
+         ASVs = ntaxa(bcms_sed), Reads = sum(sample_sums(bcms_sed))),
+  tibble(Step = "Contaminants removed",
+         ASVs = ntaxa(bcms_sed_noncontam), Reads = sum(sample_sums(bcms_sed_noncontam))),
+  tibble(Step = paste0("Samples < ", format(min_reads, big.mark = ","), " reads removed"),
+         ASVs = sum(taxa_sums(bcms_sed_final) > 0), Reads = total_reads))
+asv_steps
+save_tab(asv_steps, "T5_asv_filtering_steps")
+```
+
+# 12. Final phyloseq
+
+Microbial communities of the BCMs and sediments of all samples (Indonesia and Caribbean).
+
+```{r save all}
+dir.create(dirname(all_file), recursive = TRUE, showWarnings = FALSE)
+saveRDS(bcms_sed_final, all_file)
+```
+
+# 13. Reef BCMs
+
+```{r reef subset}
+bcms_reefs <- readRDS(all_file)
+bcms_reefs <- prune_samples(!sample_names(bcms_reefs) %in% bad_samples_reefs, bcms_reefs)
+
+bcms_reefs <- bcms_reefs %>%
+  subset_samples(site_type %in% "reef") %>%
+  subset_samples(area %in% reef_areas) %>%
+  subset_samples(!sample_origin %in% exclude_origin) %>%
+  subset_samples(!mat_color %in% exclude_mat_colors)
+bcms_reefs <- prune_taxa(taxa_sums(bcms_reefs) > 0, bcms_reefs)   # ASVs only found in other samples
+
+saveRDS(bcms_reefs, reef_file)
+
+# Check against the manuscript (Results 3.1: 47 mats, 8 sites, 1,878,770 reads, 2,488 ASVs)
+message(nsamples(bcms_reefs), " mats, ",
+        length(unique(sample_data(bcms_reefs)$site)), " sites, ",
+        format(sum(sample_sums(bcms_reefs)), big.mark = ","), " reads, ",
+        ntaxa(bcms_reefs), " ASVs; mean ",
+        format(round(mean(sample_sums(bcms_reefs))), big.mark = ","), " reads per mat")
+```
+
+# Session info
+
+Versions for the Methods (R, dada2, decontam, phyloseq).
+
+```{r session info}
+sessionInfo()
+```

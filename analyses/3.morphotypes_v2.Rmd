@@ -1,0 +1,649 @@
+---
+title: "3.Morphotypes"
+author: "Stephanie Martinez"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
+
+
+#Intro
+
+Morphological features such as substrate and color were not available for all sampled mats. Thus, the analysis of alpha and beta diversity were done separately to correctly assess the effect of substrate and color in the mats.
+
+This script only contains the colour morphotype and substrate analyses. Analyses on the full dataset (sites, environmental variables, PCoA, dbRDA) are in 2.community_analysis_bcm.Rmd.
+
+Outputs are numbered in the order they are produced:
+
+- Figures: `figures/3.morphotypes/F<n>_<name>.pdf`
+- Tables:  `outputs/3.morphotypes/T<n>_<name>.docx` (+ `.csv`)
+
+#Packages
+
+```{r setup, echo=FALSE, warning=FALSE}
+# Only the packages used in this script are loaded.
+# plyr is NOT loaded (it masks dplyr's summarise() and ignores group_by()).
+# tidylog is loaded last so its dplyr wrappers are the active ones.
+packages_used <- c("dplyr", "tibble", "ggplot2", "patchwork",
+                   "phyloseq", "vegan", "pairwiseAdonis", "MiscMetabar", "dunn.test",
+                   "flextable", "officer", "tidylog")
+
+suppressMessages(invisible(
+  lapply(packages_used, library, character.only = TRUE)
+))
+
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) {
+  message("All packages loaded correctly")
+} else {
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+}
+rm(packages_used, missing_pkgs)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+
+# Output folders
+fig_dir <- "figures/3.morphotypes"
+tab_dir <- "outputs/3.morphotypes"
+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(tab_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Save a figure as PDF in fig_dir
+save_fig <- function(plot, name, width = 11, height = 11) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), plot = plot,
+         device = cairo_pdf, width = width, height = height, units = "in")
+}
+
+# Save one or more tables as one Word file (+ one csv per table) in tab_dir
+save_tab <- function(tables, name) {
+  if (is.data.frame(tables)) tables <- setNames(list(tables), name)
+  doc <- read_docx()
+  for (nm in names(tables)) {
+    doc <- body_add_par(doc, nm, style = "Normal")
+    doc <- body_add_flextable(doc, autofit(flextable(tables[[nm]])))
+    doc <- body_add_par(doc, "")
+  }
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  for (nm in names(tables)) {
+    suffix <- if (length(tables) > 1) paste0("_", gsub("[^A-Za-z0-9]+", "_", nm)) else ""
+    write.csv(tables[[nm]], file.path(tab_dir, paste0(name, suffix, ".csv")), row.names = FALSE)
+  }
+}
+
+# Community matrix (samples as rows) from a phyloseq object, whatever its orientation
+otu_matrix <- function(ps) {
+  m <- as(otu_table(ps), "matrix")
+  if (taxa_are_rows(ps)) m <- t(m)
+  m
+}
+
+# Results table helper (rounded, optional "Source" column from row names)
+to_table <- function(x, source_col = TRUE, digits = 4) {
+  x <- as.data.frame(x)
+  if (source_col) x <- rownames_to_column(x, "Source")
+  mutate(x, across(where(is.numeric), ~ round(.x, digits)))
+}
+
+perm <- 9999   # permutations for PERMANOVA / PERMDISP
+
+# p-value correction for ALL multiple comparisons in this script
+# (Dunn tests, pairwise PERMANOVA). Same setting in 2.community_analysis_bcm.Rmd.
+# "BH" = false discovery rate; "holm" = family-wise error rate.
+p_adj_method <- "BH"
+
+# Kruskal-Wallis + Dunn post-hoc test (two-sided, corrected with p_adj_method)
+kw_dunn <- function(df, value, group, label = value) {
+  kw <- kruskal.test(df[[value]] ~ factor(df[[group]]))
+  invisible(capture.output(
+    d <- dunn.test(df[[value]], factor(df[[group]]), method = tolower(p_adj_method),
+                   altp = TRUE, kw = FALSE, table = FALSE)
+  ))
+  list(
+    kw   = tibble(Index = label, Grouping = group, Chi2 = unname(kw$statistic),
+                  df = unname(kw$parameter), p = kw$p.value),
+    dunn = tibble(Index = label, Comparison = d$comparisons, Z = d$Z,
+                  p = d$altP, p_adj = d$altP.adjusted)
+  )
+}
+
+message(paste0(utf8::as_utf8("\U0001f600"), " All good!"))
+```
+
+# Graphical parameters
+
+Site names, order and shapes are the same as in 2.community_analysis_bcm.Rmd. Codes in the data (sites, colours, substrates) are converted to display names once, when the metadata are built, so every plot and table uses the manuscript names.
+
+```{r graphical parameters}
+theme_set(theme_minimal())
+
+# Site order: by reef DIN (codes as in the data)
+order_sitetype <- c("MiosKon", "LumbaLumba", "SouthKri", "Arborek",
+                    "Yenbuba", "New Reef", "SoridoBay", "GracesWall")
+
+# Site display names (data code = display name)
+site_labels <- c("MiosKon"    = "MiosKon",
+                 "LumbaLumba" = "Lumba-Lumba",
+                 "SouthKri"   = "SouthKri",
+                 "Arborek"    = "Arborek",
+                 "Yenbuba"    = "Yenbuba",
+                 "New Reef"   = "New Reef",
+                 "SoridoBay"  = "Sorido Bay",
+                 "GracesWall" = "Grace's Wall")
+site_levels <- unname(site_labels[order_sitetype])
+
+# Site shapes (keyed by display name)
+shape_sites <- c("MiosKon"      = 2,
+                 "Lumba-Lumba"  = 5,
+                 "SouthKri"     = 4,
+                 "Arborek"      = 6,
+                 "Yenbuba"      = 3,
+                 "New Reef"     = 0,
+                 "Sorido Bay"   = 7,
+                 "Grace's Wall" = 1)
+
+# Substrate nature labels
+facet_labels_biotic <- c("abiotic" = "Abiotic",
+                         "biotic"  = "Biotic",
+                         "mixed"   = "Biotic-Abiotic")
+
+# Colour morphotypes: data code = display name; N.I. = not identifiable
+color_labels <- c("red"       = "Red",
+                  "red-brown" = "Red-brown",
+                  "lila"      = "Lilac")
+
+mats_color_code <- c("Red"       = "#0D0D0D",
+                     "Red-brown" = "#666666",
+                     "Lilac"     = "#B3B3B3",
+                     "N.I."      = "#E6E6E6")
+
+# Substrates: data code = display name; N.I. = not identifiable
+substrate_labels <- c("rock"           = "Rock",
+                      "sed-rock"       = "Sediment-Rock",
+                      "rubble"         = "Rubble",
+                      "cca-rock"       = "CCA-Rock",
+                      "mixed-benthos"  = "Mixed-benthos",
+                      "cca-macroalgae" = "CCA-Macroalgae",
+                      "coral"          = "Coral",
+                      "macroalgae"     = "Macroalgae",
+                      "sponge"         = "Sponge")
+
+# Valid substrate nature : substrate combinations (data codes)
+valid_substrates <- c("abiotic: rock", "abiotic: sed-rock", "abiotic: rubble",
+                      "mixed: cca-rock", "mixed: mixed-benthos",
+                      "biotic: cca-macroalgae", "biotic: coral", "biotic: macroalgae", "biotic: sponge")
+
+# Substrate colours (keyed by display name, grouped by substrate nature)
+substrate_colors <- c("Rock"           = "#8B4B2D",
+                      "Sediment-Rock"  = "#B9643C",
+                      "Rubble"         = "#D29274",
+                      "CCA-Rock"       = "#1F5B45",
+                      "Mixed-benthos"  = "#349873",
+                      "CCA-Macroalgae" = "#463659",
+                      "Coral"          = "#644e7e",
+                      "Macroalgae"     = "#8267a2",
+                      "Sponge"         = "#ab9ac1",
+                      "N.I."           = "#CCCCCC")
+
+# Global flextable defaults
+set_flextable_defaults(
+  theme_fun   = theme_vanilla,
+  font.size   = 10,
+  bold_header = TRUE
+)
+```
+
+#Phyloseq load
+
+Analysis based on the subset of mats based on the substrate they are on. Substrates that appear at least 3 times were considered for these analyses.
+
+The categories used are:
+
+-   cca-macroalgae, cca-rock, coral, macroalgae, mixed-benthos, rock, rubble, sed-rock, sponge
+
+Sediment is not included in the subset below. Check the sample sizes per category against `substrate_summary` after rerunning.
+
+```{r phyloseq load, echo=FALSE}
+reef_tss <- readRDS("data/bcms_filtered&tss_reefs_raja2023.rds")
+```
+
+## Phyloseqs: morphotypes
+
+Split for color morphotypes and substrates
+
+```{r phyloseq subsets}
+# Substrate categories present at least 3 times
+# NOTE: sediment is not in this list; confirm this is intentional
+morphotype_subs <- reef_tss %>%
+  subset_samples(direct_substrate %in% names(substrate_labels))
+
+# Samples with one of the three colour morphotypes (red, red-brown, lila).
+# Other codes (green_al, white) and missing colours are not included in the colour analysis
+morphotype_col <- reef_tss %>%
+  subset_samples(!is.na(site) & mat_color %in% names(color_labels))
+
+nsamples(morphotype_subs)
+nsamples(morphotype_col)
+```
+
+## Metadata
+
+`build_env()` converts site, colour and substrate codes to display names for every table used below.
+
+```{r metadata}
+build_env <- function(ps) {
+  meta <- as(sample_data(ps), "data.frame")
+  stopifnot(all(na.omit(unique(meta$site)) %in% names(site_labels)))
+  meta <- meta %>%
+    mutate(site             = factor(site_labels[site], levels = site_levels),
+           mat_color        = unname(color_labels[mat_color]),   # other colours -> NA
+           direct_substrate = unname(substrate_labels[direct_substrate]))
+  rownames(meta) <- meta$sample_id
+  meta
+}
+
+env.all  <- build_env(reef_tss) %>%                  # all mats (frequencies)
+  mutate(direct_substrate2 = na_if(trimws(direct_substrate2), ""))
+env.subs <- build_env(morphotype_subs)              # substrate subset
+env.col  <- build_env(morphotype_col)               # colour subset
+
+stopifnot(!anyNA(env.subs$direct_substrate), !anyNA(env.col$mat_color))
+```
+
+#-------------------------------
+
+# Frequencies
+
+All mats, so the proportions include the non-identifiable (N.I.) mats.
+
+## Substrate stacked plot
+
+```{r substrate frequencies}
+# Valid combinations -> substrate display name; missing or unlisted -> N.I.
+env.all <- env.all %>%
+  mutate(
+    raw_grouped     = paste(biotic_abiotic, direct_substrate2, sep = ": "),
+    is_valid        = raw_grouped %in% valid_substrates,
+    nature_clean    = if_else(is_valid, as.character(biotic_abiotic), "N.I."),
+    substrate_clean = if_else(is_valid, unname(substrate_labels[direct_substrate2]), "N.I.")
+  )
+
+env_nested <- env.all %>%
+  dplyr::count(nature_clean, substrate_clean, name = "n") %>%
+  mutate(prop = (n / sum(n)) * 100,
+         # bottom to top: N.I. -> mixed -> abiotic -> biotic
+         nature_clean    = factor(nature_clean, levels = c("N.I.", "mixed", "abiotic", "biotic")),
+         substrate_clean = factor(substrate_clean, levels = names(substrate_colors)))
+
+subs_nested <- ggplot(env_nested, aes(y = nature_clean, x = prop, fill = substrate_clean)) +
+  geom_bar(stat = "identity", color = "white") +
+  scale_y_discrete(labels = c(facet_labels_biotic, "N.I." = "N.I.")) +
+  scale_fill_manual(values = substrate_colors) +
+  labs(x = "Proportion (%)", y = "Substrate nature", fill = "Substrate") +
+  theme_minimal(base_size = 14)
+subs_nested
+
+save_fig(subs_nested, "F1_substrate_frequencies", width = 8, height = 3)
+
+# Summary: all mats, and only mats with an identifiable substrate
+substrate_summary <- env.all %>%
+  dplyr::count(nature_clean, substrate_clean, name = "count") %>%
+  mutate(percentage_all        = round(count / sum(count) * 100, 2),
+         percentage_identified = ifelse(substrate_clean == "N.I.", NA,
+                                        round(count / sum(count[substrate_clean != "N.I."]) * 100, 2))) %>%
+  arrange(nature_clean, desc(count))
+substrate_summary
+
+substrate_nature_summary <- env.all %>%
+  dplyr::count(nature_clean, name = "count") %>%
+  mutate(percentage_all        = round(count / sum(count) * 100, 2),
+         percentage_identified = ifelse(nature_clean == "N.I.", NA,
+                                        round(count / sum(count[nature_clean != "N.I."]) * 100, 2)))
+substrate_nature_summary
+```
+
+## Substrate per site
+
+Proportion of substrate nature (biotic, abiotic, mixed) per site, among mats with an identifiable substrate (Fig. S8 in the text).
+
+```{r substrate per site}
+substrate_site_summary <- env.all %>%
+  filter(nature_clean != "N.I.") %>%
+  dplyr::count(site, nature_clean, name = "count") %>%
+  group_by(site) %>%
+  mutate(percentage = round(count / sum(count) * 100, 1)) %>%
+  ungroup()
+substrate_site_summary
+
+subs_site_plot <- ggplot(substrate_site_summary,
+                         aes(x = site, y = percentage, fill = nature_clean)) +
+  geom_bar(stat = "identity", colour = "white") +
+  scale_fill_manual(values = c(abiotic = "#B9643C", mixed = "#349873", biotic = "#8267a2"),
+                    labels = facet_labels_biotic, name = "Substrate nature") +
+  labs(x = "", y = "Proportion (%)") +
+  theme_bw(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+subs_site_plot
+
+save_fig(subs_site_plot, "F2_substrate_nature_sites", width = 10, height = 7)
+```
+
+## Colors per site
+
+```{r colour per site}
+env.all <- env.all %>%
+  mutate(color_clean = factor(ifelse(is.na(mat_color), "N.I.", mat_color),
+                              levels = c("N.I.", "Lilac", "Red-brown", "Red")))
+
+freq_color_site <- ggplot(env.all, aes(x = site, fill = color_clean)) +
+  geom_bar(position = "stack") +
+  labs(x = "", y = "Frequency", fill = "Color Morphotype") +
+  scale_fill_manual(values = mats_color_code) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "bottom",
+        text = element_text(size = 15))
+freq_color_site
+
+save_fig(freq_color_site, "F3_color_frequencies_sites", width = 10, height = 7)
+```
+
+## Colors overall
+
+```{r colour overall}
+color_summary <- env.all %>%
+  dplyr::count(color_clean, name = "n") %>%
+  mutate(percentage_all        = round(n / sum(n) * 100, 2),
+         percentage_identified = ifelse(color_clean == "N.I.", NA,
+                                        round(n / sum(n[color_clean != "N.I."]) * 100, 2)))
+color_summary
+
+freq_color <- ggplot(color_summary, aes(y = color_clean, x = percentage_all, fill = color_clean)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = mats_color_code, guide = "none") +
+  labs(x = "Proportion (%)", y = "Color Morphotype") +
+  theme_minimal(base_size = 14)
+freq_color
+
+save_fig(freq_color, "F4_color_frequencies", width = 6, height = 4)
+
+save_tab(list("Substrate categories"      = substrate_summary,
+              "Substrate nature"          = substrate_nature_summary,
+              "Substrate nature per site" = substrate_site_summary,
+              "Colour morphotypes"        = color_summary),
+         "T1_morphotype_frequencies")
+```
+
+#------------------------------
+
+#Alpha diversity
+
+## Hill numbers
+
+Package "MiscMetabar" (`hill_pq`), the same function as in 2.community_analysis_bcm.Rmd.
+
+Hill numbers are the number of equiprobable species giving the same diversity value as the observed distribution.
+
+-   Hill number 0: Species richness
+-   Hill number 1: Exponential of Shannon Index
+-   Hill number 2: Inverse of Simpson Index
+
+Tests: Kruskal-Wallis on the exponential Shannon index (q = 1), followed by two-sided Dunn tests corrected with `p_adj_method` (same tests as in 2.community_analysis_bcm.Rmd).
+
+```{r hill numbers substrate}
+hill_subs <- hill_pq(morphotype_subs, "direct_substrate", add_points = TRUE, one_plot = FALSE)
+hill_subs_raw <- as.data.frame(hill_subs[[1]][["data"]])
+stopifnot(all(c("sample_id", "Hill_0", "Hill_1", "Hill_2") %in% names(hill_subs_raw)))
+
+# Hill numbers + display names (from env.subs)
+hill_substratedf <- hill_subs_raw %>%
+  select(sample_id, Hill_0, Hill_1, Hill_2) %>%
+  inner_join(env.subs %>% select(sample_id, site, direct_substrate, biotic_abiotic), by = "sample_id")
+
+stopifnot(nrow(hill_substratedf) == nrow(env.subs))
+```
+
+## Direct Substrates
+
+```{r shannon by direct substrate}
+kwd_substrate <- kw_dunn(hill_substratedf, "Hill_1", "direct_substrate", "Exp. Shannon (q = 1)")
+kwd_substrate$kw
+kwd_substrate$dunn %>% filter(p_adj < 0.05)
+```
+
+<!-- TODO: rerun and update this text. Dunn tests are now two-sided and corrected with p_adj_method, so the pairwise results can differ from the earlier one-sided Bonferroni version. -->
+
+Kruskal-Wallis test indicated overall differences among substrates (p = 0.02), but post-hoc Dunn's tests did not identify significant pairwise differences. This suggests a general shift in diversity patterns without strong divergence between specific substrate types.
+
+Plot
+
+```{r hill substrate type plot}
+caption_text <- with(kwd_substrate$kw,
+                     paste0("Kruskal-Wallis χ² = ", round(Chi2, 2),
+                            ", df = ", df, ", p = ", signif(p, 3)))
+
+p.substrate <-
+  ggplot(hill_substratedf, aes(x = reorder(direct_substrate, Hill_1, FUN = median), y = Hill_1)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4, color = "black") +
+  labs(x = "", y = "Exp. Shannon (q = 1)", caption = caption_text,
+       title = "Exponential Shannon index across substrate types") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 14))
+p.substrate
+
+save_fig(p.substrate, "F5_shannon_substrate", width = 9, height = 7)
+```
+
+## Biotic-Abiotic
+
+```{r shannon by biotic-abiotic}
+kwd_biotic <- kw_dunn(hill_substratedf, "Hill_1", "biotic_abiotic", "Exp. Shannon (q = 1)")
+kwd_biotic$kw
+kwd_biotic$dunn
+```
+
+Plot
+
+```{r hill biotic plot}
+caption_text <- with(kwd_biotic$kw,
+                     paste0("Kruskal-Wallis χ² = ", round(Chi2, 2),
+                            ", df = ", df, ", p = ", signif(p, 3)))
+
+p.biotic <-
+  ggplot(hill_substratedf, aes(x = reorder(biotic_abiotic, Hill_1, FUN = median), y = Hill_1)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4, color = "black") +
+  scale_x_discrete(labels = facet_labels_biotic) +
+  labs(x = "", y = "Exp. Shannon (q = 1)", caption = caption_text,
+       title = "Exponential Shannon index: biotic - abiotic") +
+  theme(axis.text.x = element_text(size = 14))
+p.biotic
+
+save_fig(p.biotic, "F6_shannon_biotic_abiotic", width = 7, height = 7)
+```
+
+Save alpha diversity tables
+
+```{r alpha tables}
+alpha_kw <- bind_rows(kwd_substrate$kw, kwd_biotic$kw) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+alpha_dunn <- bind_rows(kwd_substrate$dunn %>% mutate(Grouping = "direct_substrate"),
+                        kwd_biotic$dunn    %>% mutate(Grouping = "biotic_abiotic")) %>%
+  relocate(Grouping, .after = Index) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+save_tab(setNames(list(alpha_kw, alpha_dunn),
+                  c("Kruskal-Wallis", paste0("Dunn tests (", p_adj_method, ")"))),
+         "T2_alpha_substrate")
+```
+
+## Color
+
+Since the sample size per category is heavily unbalanced (see `color_summary`), we did not do this test.
+
+#-----------------------
+
+# Beta diversity
+
+## Community matrices
+
+```{r beta matrices}
+# Rows in the same order as the matching env table
+community.matx.subs <- otu_matrix(morphotype_subs)[rownames(env.subs), , drop = FALSE]
+community.matx.col  <- otu_matrix(morphotype_col)[rownames(env.col), , drop = FALSE]
+
+stopifnot(identical(rownames(community.matx.subs), rownames(env.subs)),
+          identical(rownames(community.matx.col),  rownames(env.col)))
+
+# Bray-Curtis distances (used for PERMDISP and PCoA)
+bray_subs <- vegdist(community.matx.subs, method = "bray")
+bray_col  <- vegdist(community.matx.col,  method = "bray")
+
+# How substrates and colours are distributed across sites (confounding check)
+table(env.subs$site, env.subs$direct_substrate)
+table(env.col$site,  env.col$mat_color)
+```
+
+## PERMANOVA substrates
+
+Site has a strong effect on community composition (script 2), and substrates and colours are not evenly spread across sites. Each morphotype is therefore tested twice: on its own, and after accounting for site (`site + morphotype`, marginal test). The second test shows whether the morphotype explains variation beyond the site differences.
+
+```{r permanova substrates}
+# Direct substrate
+permanova.substrate <- adonis2(community.matx.subs ~ direct_substrate,
+                               data = env.subs, permutations = perm,
+                               method = "bray", na.action = na.omit)
+permanova.substrate
+
+permanova.substrate.site <- adonis2(community.matx.subs ~ site + direct_substrate,
+                                    data = env.subs, permutations = perm,
+                                    method = "bray", by = "margin", na.action = na.omit)
+permanova.substrate.site
+
+pairwise_substrate <- pairwise.adonis(x = community.matx.subs,
+                                      factors = env.subs$direct_substrate,
+                                      sim.method = "bray",
+                                      p.adjust.m = p_adj_method,
+                                      perm = perm) %>%
+  to_table(source_col = FALSE)
+
+# Biotic-abiotic
+permanova.biotic <- adonis2(community.matx.subs ~ biotic_abiotic,
+                            data = env.subs, permutations = perm,
+                            method = "bray", na.action = na.omit)
+permanova.biotic
+
+permanova.biotic.site <- adonis2(community.matx.subs ~ site + biotic_abiotic,
+                                 data = env.subs, permutations = perm,
+                                 method = "bray", by = "margin", na.action = na.omit)
+permanova.biotic.site
+
+pairwise_biotic <- pairwise.adonis(x = community.matx.subs,
+                                   factors = env.subs$biotic_abiotic,
+                                   sim.method = "bray",
+                                   p.adjust.m = p_adj_method,
+                                   perm = perm) %>%
+  to_table(source_col = FALSE)
+
+# Homogeneity of dispersion (PERMDISP)
+permdisp_substrate <- permutest(betadisper(bray_subs, env.subs$direct_substrate), permutations = perm)
+permdisp_biotic    <- permutest(betadisper(bray_subs, env.subs$biotic_abiotic),   permutations = perm)
+permdisp_substrate
+permdisp_biotic
+```
+
+## PERMANOVA color
+
+Note: colour groups are very unbalanced (2-3 mats for lilac and red-brown), the same reason the alpha diversity test was not done. Interpret with caution.
+
+```{r permanova colour}
+permanova.color <- adonis2(community.matx.col ~ mat_color,
+                           data = env.col, permutations = perm,
+                           method = "bray", na.action = na.omit)
+permanova.color
+
+permanova.color.site <- adonis2(community.matx.col ~ site + mat_color,
+                                data = env.col, permutations = perm,
+                                method = "bray", by = "margin", na.action = na.omit)
+permanova.color.site
+
+pairwise_color <- pairwise.adonis(x = community.matx.col,
+                                  factors = env.col$mat_color,
+                                  sim.method = "bray",
+                                  p.adjust.m = p_adj_method,
+                                  perm = perm) %>%
+  to_table(source_col = FALSE)
+
+permdisp_color <- permutest(betadisper(bray_col, env.col$mat_color), permutations = perm)
+permdisp_color
+```
+
+## PERMANOVA save
+
+```{r permanova save}
+permanova_list <- list(
+  "PERMANOVA substrate"                   = to_table(permanova.substrate),
+  "PERMANOVA substrate (after site)"      = to_table(permanova.substrate.site),
+  "PERMANOVA biotic-abiotic"              = to_table(permanova.biotic),
+  "PERMANOVA biotic-abiotic (after site)" = to_table(permanova.biotic.site),
+  "PERMANOVA color morphotype"            = to_table(permanova.color),
+  "PERMANOVA color (after site)"          = to_table(permanova.color.site),
+  "PERMDISP substrate"                    = to_table(permdisp_substrate$tab),
+  "PERMDISP biotic-abiotic"               = to_table(permdisp_biotic$tab),
+  "PERMDISP color"                        = to_table(permdisp_color$tab),
+  "Pairwise substrate"                    = pairwise_substrate,
+  "Pairwise biotic-abiotic"               = pairwise_biotic,
+  "Pairwise color morphotype"             = pairwise_color
+)
+
+save_tab(permanova_list, "T3_permanova_substrate_color")
+```
+
+## PCoA of the morphotype subsets
+
+Visualises the PERMANOVAs above: one PCoA per subset, coloured by morphotype and with site as shape.
+
+```{r pcoa morphotypes}
+# PCoA scores + % variance (negative eigenvalues set to 0 in the total)
+pcoa_scores <- function(d, env_df) {
+  res <- cmdscale(d, eig = TRUE, k = 2)
+  eig <- pmax(res$eig, 0)
+  list(df   = data.frame(Axis1 = res$points[, 1], Axis2 = res$points[, 2], env_df),
+       expl = round(100 * eig / sum(eig), 1))
+}
+
+pcoa_subs <- pcoa_scores(bray_subs, env.subs)
+pcoa_col  <- pcoa_scores(bray_col,  env.col)
+
+pcoa_substrate_plot <- ggplot(pcoa_subs$df,
+                              aes(x = Axis1, y = Axis2, colour = direct_substrate, shape = site)) +
+  geom_point(size = 3, stroke = 1) +
+  scale_colour_manual(values = substrate_colors, name = "Substrate") +
+  scale_shape_manual(values = shape_sites, name = "Site") +
+  labs(x = paste0("PCoA1 (", pcoa_subs$expl[1], "%)"),
+       y = paste0("PCoA2 (", pcoa_subs$expl[2], "%)"),
+       title = "Substrate") +
+  theme_bw()
+pcoa_substrate_plot
+
+pcoa_color_plot <- ggplot(pcoa_col$df,
+                          aes(x = Axis1, y = Axis2, colour = mat_color, shape = site)) +
+  geom_point(size = 3, stroke = 1) +
+  scale_colour_manual(values = mats_color_code, name = "Color") +
+  scale_shape_manual(values = shape_sites, name = "Site") +
+  labs(x = paste0("PCoA1 (", pcoa_col$expl[1], "%)"),
+       y = paste0("PCoA2 (", pcoa_col$expl[2], "%)"),
+       title = "Color morphotype") +
+  theme_bw()
+pcoa_color_plot
+
+save_fig(pcoa_substrate_plot, "F7_pcoa_substrate", width = 9, height = 7)
+save_fig(pcoa_color_plot,     "F8_pcoa_color",     width = 9, height = 7)
+```

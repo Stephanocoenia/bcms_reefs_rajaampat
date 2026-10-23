@@ -1,0 +1,5 @@
+"Function","chi2","df","p","p_adj"
+"Photoautotrophy",10.83,7,0.146,0.146
+"Chemoheterotrophy",15.73,7,0.0277,0.0369
+"Aerobic ammonia oxidation",18.53,7,0.00981,0.024
+"Nitrate reduction",17.99,7,0.012,0.024

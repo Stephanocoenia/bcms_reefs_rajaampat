@@ -1,0 +1,13 @@
+
+/.Rproj.user
+/.Rproj.user
+.Rproj.user
+.Rhistory
+.Rdata
+.httr-oauth
+.DS_Store
+/data/sequences/
+/data/sequences_renamed/
+/data/rds/
+/data/dada2
+/analysis/claude

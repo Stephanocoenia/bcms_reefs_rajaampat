@@ -1,0 +1,33 @@
+"Phylum","Class","Genus","reads_pct","assigned","genus_in_FAPROTAX","FAPROTAX_patterns","species_level_only"
+"Bacteroidota","Bacteroidia","Fluviicola",0.18,FALSE,TRUE,"Fluviicola taffensis",TRUE
+"Planctomycetota","Phycisphaerae","Phycisphaera",0.17,FALSE,TRUE,"Phycisphaera mikurensis",TRUE
+"Proteobacteria","Alphaproteobacteria","Hoeflea",0.15,FALSE,TRUE,"Hoeflea halophila | Hoeflea marina | Hoeflea olei | Hoeflea phototrophica",TRUE
+"Proteobacteria","Alphaproteobacteria","Kordiimonas",0.15,FALSE,TRUE,"Kordiimonas gwangyangensis",TRUE
+"Proteobacteria","Alphaproteobacteria","Ponticoccus",0.13,FALSE,TRUE,"Ponticoccus litoralis",TRUE
+"Proteobacteria","Alphaproteobacteria","Marinovum",0.09,FALSE,TRUE,"Marinovum algicola",TRUE
+"Proteobacteria","Alphaproteobacteria","Maritimibacter",0.09,FALSE,TRUE,"Maritimibacter alkaliphilus",TRUE
+"Proteobacteria","Gammaproteobacteria","Arenicella",0.09,FALSE,TRUE,"Arenicella chitinivorans | Arenicella xantha",TRUE
+"Proteobacteria","Alphaproteobacteria","Loktanella",0.08,FALSE,TRUE,"Loktanella sediminilitoris | Loktanella vestfoldensis | Loktanella fryxellensis | Loktanella salsilacus",TRUE
+"Proteobacteria","Alphaproteobacteria","Tropicibacter",0.08,FALSE,TRUE,"Tropicibacter multivorans | Tropicibacter naphthalenivorans | Tropicibacter phthalicus",TRUE
+"Actinobacteriota","Acidimicrobiia","Ilumatobacter",0.07,FALSE,TRUE,"Ilumatobacter fluminis",TRUE
+"Bdellovibrionota","Bdellovibrionia","Halobacteriovorax",0.06,FALSE,TRUE,"Deltaproteobacteria Halobacteriovorax",FALSE
+"Proteobacteria","Alphaproteobacteria","Cohaesibacter",0.06,FALSE,TRUE,"Cohaesibacter gelatinilyticus",TRUE
+"Crenarchaeota","Nitrososphaeria","Cenarchaeum",0.05,FALSE,TRUE,"Cenarchaeum symbiosum",TRUE
+"Proteobacteria","Alphaproteobacteria","Tistlia",0.05,FALSE,TRUE,"Tistlia consotensis",TRUE
+"Proteobacteria","Alphaproteobacteria","Tropicimonas",0.04,FALSE,TRUE,"Tropicimonas isoalkanivorans",TRUE
+"Myxococcota","Polyangia","Nannocystis",0.03,FALSE,TRUE,"Nannocystis exedens",TRUE
+"Myxococcota","Polyangia","Plesiocystis",0.03,FALSE,TRUE,"Plesiocystis pacifica",TRUE
+"Proteobacteria","Gammaproteobacteria","Congregibacter",0.03,FALSE,TRUE,"Congregibacter litoralis",TRUE
+"Nitrospirota","Nitrospiria","Nitrospira",0.02,FALSE,TRUE,"Nitrospira nitrosa | Nitrospira nitrificans | Nitrospira inopinata | Nitrospirae Nitrospira",FALSE
+"Verrucomicrobiota","Verrucomicrobiae","Diplosphaera",0.02,FALSE,TRUE,"Diplosphaera colitermitum",TRUE
+"Acidobacteriota","Blastocatellia","Blastocatella",0.01,FALSE,TRUE,"Blastocatella fastidiosa",TRUE
+"Planctomycetota","Phycisphaerae","Algisphaera",0.01,FALSE,TRUE,"Algisphaera agarilytica",TRUE
+"Proteobacteria","Alphaproteobacteria","Nautella",0.01,FALSE,TRUE,"Nautella italica",TRUE
+"Proteobacteria","Alphaproteobacteria","Roseibacterium",0.01,FALSE,TRUE,"Roseibacterium elongatum",TRUE
+"Proteobacteria","Alphaproteobacteria","Tateyamaria",0.01,FALSE,TRUE,"Tateyamaria pelophila | Tateyamaria omphalii",TRUE
+"Proteobacteria","Gammaproteobacteria","Oleiphilus",0.01,FALSE,TRUE,"Oleiphilus messinensis",TRUE
+"Proteobacteria","Gammaproteobacteria","Thalassolituus",0.01,FALSE,TRUE,"Thalassolituus oleivorans",TRUE
+"Proteobacteria","Gammaproteobacteria","Thiohalobacter",0.01,FALSE,TRUE,"Thiohalobacter thiocyanaticus",TRUE
+"Spirochaetota","Leptospirae","Leptospira",0.01,FALSE,TRUE,"Leptospira borgpetersenii | Leptospira borgpetersenii str. 4E | Leptospira interrogans",TRUE
+"Proteobacteria","Alphaproteobacteria","Oceanicola",0,FALSE,TRUE,"Oceanicola nitratireducens | Oceanicola nanhaiensis | Oceanicola marinus | Oceanicola litoreus",TRUE
+"Proteobacteria","Gammaproteobacteria","Marinobacterium",0,FALSE,TRUE,"Marinobacterium georgiense | Marinobacterium mangrovicola | Marinobacterium litorale | Alteromonadaceae Marinobacterium",FALSE

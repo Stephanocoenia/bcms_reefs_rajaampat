@@ -1,0 +1,911 @@
+---
+title: "6. GLLVM reefs"
+author: "Stephanie Martinez"
+date: "2025-06-03"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r root, include = FALSE}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
+
+# Notebook setup
+
+GLLVMs of the reef BCM communities at three levels: ASVs of the 50 most abundant genera, the 5 most abundant phyla, and all genera. Followed by nitrogen-species models.
+
+GLLVMs need **read counts**, so this script uses the filtered count phyloseq (`reef_counts`), not the TSS object (`reef_tss`) used in scripts 2 and 3. Object names, site names, shapes and phylum colours follow scripts 2 and 3.
+
+Models take hours to fit. Every model is saved in `outputs/models/reefs/` and loaded from there:
+
+- a model whose file exists is **loaded**;
+- a model whose file is missing is **fitted** (and saved);
+- set `refit_models <- TRUE` to refit all models.
+
+Model settings (setup chunk): `use_offset` (sequencing-depth offset), `n_init` (starting values), `drop_unidentified` (exclude ASVs without a genus) and `sig_rule`. File names get a suffix for these settings (e.g. `_offset_noUnid`), so models fitted with different settings are kept apart; with the offset and the exclusion switched off, the original saved models are loaded.
+
+Outputs: `figures/6.gllvm/F<n>_<name>.pdf` and `outputs/6.gllvm/T<n>_<name>.docx` (+ `.csv`).
+
+```{r setup, echo=FALSE, warning=FALSE}
+packages_used <- c("dplyr", "tidyr", "tibble", "ggplot2", "ggrepel", "ggtext",
+                   "phyloseq", "gllvm", "corrplot", "gclus",
+                   "flextable", "officer", "beepr", "tidylog")
+
+suppressMessages(invisible(lapply(packages_used, library, character.only = TRUE)))
+
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) message("All packages loaded correctly") else
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+rm(packages_used, missing_pkgs)
+
+theme_set(theme_bw())
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+set_flextable_defaults(theme_fun = theme_vanilla, font.size = 10, bold_header = TRUE)
+
+refit_models <- FALSE                 # TRUE = refit every model (hours)
+model_dir    <- "outputs/models/reefs"
+p_adj_method <- "BH"                  # same correction as scripts 2 and 3
+
+# ---- Model settings ----
+use_offset        <- TRUE      # log(total filtered reads per sample) as offset for sequencing depth
+n_init            <- 3         # starting values per fit; the best fit is kept
+drop_unidentified <- TRUE      # exclude ASVs without a genus ("Unidentified") from the response
+sig_rule          <- "p_adj"   # "p_adj" = p adjusted with p_adj_method; "ci" = 95% CI excludes 0 (no correction)
+
+# Model files get a suffix for these settings, so models fitted with different settings never
+# overwrite each other. With use_offset = FALSE and drop_unidentified = FALSE the original saved
+# models (no offset, single start, "Unidentified" included) are loaded.
+model_suffix <- paste0(if (use_offset) "_offset" else "", if (drop_unidentified) "_noUnid" else "")
+
+fig_dir <- "figures/6.gllvm"
+tab_dir <- "outputs/6.gllvm"
+for (d in c(fig_dir, tab_dir, model_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+
+# ---- Output helpers (same as scripts 2 and 3) ----
+save_fig <- function(plot, name, width = 11, height = 11) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), plot = plot,
+         device = cairo_pdf, width = width, height = height, units = "in")
+}
+
+# Base-graphics figures (coefplot, residual plots, corrplot): drawn in the document and saved as PDF
+save_base_fig <- function(name, draw, width = 11, height = 11) {
+  draw()
+  cairo_pdf(file.path(fig_dir, paste0(name, ".pdf")), width = width, height = height)
+  draw()
+  dev.off()
+  invisible()
+}
+
+save_tab <- function(tables, name) {
+  if (is.data.frame(tables)) tables <- setNames(list(tables), name)
+  doc <- read_docx()
+  for (nm in names(tables)) {
+    doc <- body_add_par(doc, nm, style = "Normal")
+    doc <- body_add_flextable(doc, autofit(flextable(tables[[nm]])))
+    doc <- body_add_par(doc, "")
+  }
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  for (nm in names(tables)) {
+    suffix <- if (length(tables) > 1) paste0("_", gsub("[^A-Za-z0-9]+", "_", nm)) else ""
+    write.csv(tables[[nm]], file.path(tab_dir, paste0(name, suffix, ".csv")), row.names = FALSE)
+  }
+}
+
+# Community matrix (samples as rows) from a phyloseq object, whatever its orientation
+otu_matrix <- function(ps) {
+  m <- as(otu_table(ps), "matrix")
+  if (taxa_are_rows(ps)) m <- t(m)
+  m
+}
+
+message(paste0(utf8::as_utf8("\U0001f600"), " All good!"))
+```
+
+# Graphical parameters
+
+Same site names, order and shapes as scripts 2 and 3. Phylum colours follow script 2; for text labels, "Unidentified" is grey instead of white.
+
+```{r graphical parameters}
+order_sitetype <- c("MiosKon", "LumbaLumba", "SouthKri", "Arborek",
+                    "Yenbuba", "New Reef", "SoridoBay", "GracesWall")
+
+site_labels <- c("MiosKon"    = "MiosKon",
+                 "LumbaLumba" = "Lumba-Lumba",
+                 "SouthKri"   = "SouthKri",
+                 "Arborek"    = "Arborek",
+                 "Yenbuba"    = "Yenbuba",
+                 "New Reef"   = "New Reef",
+                 "SoridoBay"  = "Sorido Bay",
+                 "GracesWall" = "Grace's Wall")
+site_levels <- unname(site_labels[order_sitetype])
+
+shape_sites <- c("Arborek"      = 16,  # filled circle
+                 "Grace's Wall" = 17,  # filled triangle
+                 "Lumba-Lumba"  = 15,  # filled square
+                 "MiosKon"      = 18,  # filled diamond
+                 "New Reef"     = 8,   # asterisk
+                 "Sorido Bay"   = 1,   # empty circle
+                 "SouthKri"     = 2,   # empty triangle
+                 "Yenbuba"      = 0)   # empty square
+
+phylum_colors <- c("Cyanobacteriota"   = "#b02b25",
+                   "Proteobacteria"    = "#185563",
+                   "Bacteroidota"      = "#00A087",
+                   "Planctomycetota"   = "#0C2C84",
+                   "Verrucomicrobiota" = "#F39B7F",
+                   "Crenarchaeota"     = "#FFC857",
+                   "Actinobacteriota"  = "#F26419",
+                   "Bdellovibrionota"  = "#7B4F9E",
+                   "Acidobacteriota"   = "#9071C1",
+                   "Fusobacteriota"    = "#7E6148",
+                   "Desulfobacterota"  = "#1B065E",
+                   "Myxococcota"       = "#8491B4",
+                   "Firmicutes"        = "#135353",
+                   "Unidentified"      = "grey40")
+
+# Environmental variables (column = plotmath label), as in script 2
+env_vars <- c(DIN         = "DIN",
+              mean.PO4    = "PO[4]^'3-'",
+              temperature = "Temperature",
+              chla        = "'Chl-a'")
+
+env_vars_N <- c(mean.NO3 = "NO[3]^'-'",
+                mean.NO2 = "NO[2]^'-'",
+                mean.NH4 = "NH[4]^'+'")
+```
+
+# Data
+
+## Phyloseq, taxonomy and metadata
+
+```{r data}
+# Filtered COUNT phyloseq (GLLVMs need counts; scripts 2-3 use the TSS version reef_tss)
+reef_counts <- readRDS("data/bcms_filtered_reefs_raja2023.rds")
+
+community.counts <- otu_matrix(reef_counts)   # samples x ASVs, raw counts
+if (any(community.counts != round(community.counts)))
+  warning("community.counts contains non-integer values: negative binomial models need counts")
+
+# Taxonomy with an ASV column (same object name as in script 2)
+tax_df <- as.data.frame(as(tax_table(reef_counts), "matrix")) %>%
+  rownames_to_column("ASV")
+
+# Sample metadata with display site names (same object name as in scripts 2 and 3)
+env <- as(sample_data(reef_counts), "data.frame") %>%
+  filter(!is.na(site))
+stopifnot(all(unique(env$site) %in% names(site_labels)))
+env <- env %>% mutate(site = factor(site_labels[site], levels = site_levels))
+rownames(env) <- env$sample_id
+
+# Scaled predictors from the correlation/collinearity script (used as X)
+env_scaled <- read.csv("data/environmental_scaled_filtered_reefs.csv", row.names = 1)
+stopifnot(all(names(env_vars) %in% colnames(env_scaled)))
+```
+
+## GLLVM helpers
+
+```{r gllvm helpers}
+# Rename unassigned taxa consistently (older models used "Unknown")
+normalize_taxa <- function(x) sub("^Unknown$", "Unidentified", x)
+
+# Sum ASV counts per taxonomic rank (NA -> "Unidentified"); optionally keep only some taxa
+# drop = TRUE removes the pooled "Unidentified" column (see drop_unidentified)
+aggregate_taxa <- function(counts, rank, keep = NULL, drop = drop_unidentified) {
+  lab <- tax_df[[rank]][match(colnames(counts), tax_df$ASV)]
+  lab[is.na(lab)] <- "Unidentified"
+  if (!is.null(keep)) {
+    sel    <- lab %in% keep
+    counts <- counts[, sel, drop = FALSE]
+    lab    <- lab[sel]
+  }
+  out <- t(rowsum(t(counts), group = lab))
+  if (drop) out <- out[, colnames(out) != "Unidentified", drop = FALSE]
+  out
+}
+
+# Y, X and study design with the same samples in the same order
+prep_gllvm <- function(Y, X_source = env_scaled) {
+  Y   <- as.matrix(Y)
+  Y   <- Y[rowSums(Y) > 0, , drop = FALSE]
+  ids <- Reduce(intersect, list(rownames(Y), rownames(X_source), rownames(env)))
+  dropped <- setdiff(rownames(Y), ids)
+  if (length(dropped) > 0)
+    message("Samples dropped (missing predictors or metadata): ", paste(dropped, collapse = ", "))
+  Y <- Y[ids, , drop = FALSE]
+  Y <- Y[, colSums(Y) > 0, drop = FALSE]
+  X      <- X_source[ids, , drop = FALSE]
+  design <- env[ids, c("site", "biotic_abiotic", "direct_substrate"), drop = FALSE]
+  stopifnot(identical(rownames(Y), rownames(X)),
+            identical(rownames(Y), rownames(design)),
+            !anyNA(design$site))
+  message(nrow(Y), " samples x ", ncol(Y), " taxa")
+  list(Y = Y, X = X, design = design)
+}
+
+# Negative binomial GLLVM with a random site intercept
+# Offset (use_offset): log of the total filtered reads of each sample, calculated from ALL
+# filtered ASVs (community.counts), not only the modelled taxa, so it does not depend on
+# which taxa are included. n_init starting values guard against local optima.
+fit_nb <- function(d, formula = NULL, num.lv = 2, sd.errors = TRUE) {
+  args <- list(y = d$Y, studyDesign = d$design, family = "negative.binomial",
+               row.eff = ~(1 | site), num.lv = num.lv, sd.errors = sd.errors,
+               n.init = n_init, seed = 123)
+  if (use_offset) {
+    lib_size    <- rowSums(community.counts)[rownames(d$Y)]
+    args$offset <- matrix(log(lib_size), nrow = nrow(d$Y), ncol = ncol(d$Y))
+  }
+  if (!is.null(formula)) {
+    args$X       <- d$X
+    args$formula <- formula
+  }
+  do.call(gllvm, args)
+}
+
+# Load a saved model; fit and save it if the file is missing (or refit_models = TRUE)
+fit_or_load <- function(file, fit_expr) {
+  path <- file.path(model_dir, paste0(file, model_suffix, ".rds"))
+  if (!refit_models && file.exists(path)) return(readRDS(path))
+  message("Fitting ", file, " ...")
+  t0 <- Sys.time()
+  m  <- fit_expr                       # evaluated only here
+  message(file, " fitted in ", format(round(Sys.time() - t0, 1)))
+  saveRDS(m, path)
+  gc()
+  m
+}
+
+# Warn if a saved model was fitted on different data than the current Y
+check_model_data <- function(m, d, name) {
+  ok <- nrow(m$y) == nrow(d$Y) &&
+        setequal(normalize_taxa(colnames(m$y)), normalize_taxa(colnames(d$Y)))
+  if (!ok) warning(name, ": saved model was fitted on different data (",
+                   nrow(m$y), " x ", ncol(m$y), " vs current ",
+                   nrow(d$Y), " x ", ncol(d$Y), ")")
+  invisible(ok)
+}
+
+# AIC table (AICc from gllvm when available)
+aicc_safe <- function(m) tryCatch(AICc(m),
+                                  error = function(e) tryCatch(AICc.gllvm(m),
+                                                               error = function(e) NA_real_))
+aic_table <- function(models, label = "Model") {
+  tibble(Model     = names(models),
+         n_LV      = sapply(models, function(m) m$num.lv),
+         converged = sapply(models, function(m) isTRUE(m$convergence)),
+         logLik    = sapply(models, function(m) as.numeric(logLik(m))),
+         df        = sapply(models, function(m) attr(logLik(m), "df")),
+         AIC       = sapply(models, AIC),
+         AICc      = sapply(models, aicc_safe),
+         BIC       = sapply(models, BIC)) %>%
+    mutate(dAIC = AIC - min(AIC)) %>%
+    arrange(AIC) %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2))) %>%
+    rename(!!label := Model)
+}
+
+# Likelihood-ratio test between nested models (same number of latent variables)
+compare_gllvm <- function(model_reduced, model_full) {
+  stopifnot(inherits(model_reduced, "gllvm"), inherits(model_full, "gllvm"))
+  if (!model_reduced$convergence || !model_full$convergence)
+    warning("One or both models did not converge. Results may be unreliable.")
+  if (model_reduced$num.lv != model_full$num.lv)
+    warning("Models have different numbers of latent variables: they are not nested.")
+  LL_full  <- logLik(model_full)
+  LL_red   <- logLik(model_reduced)
+  df_diff  <- attr(LL_full, "df") - attr(LL_red, "df")
+  LRT_stat <- max(0, 2 * (as.numeric(LL_full) - as.numeric(LL_red)))
+  tibble(LRT = LRT_stat, df = df_diff,
+         p   = pchisq(LRT_stat, df = df_diff, lower.tail = FALSE),
+         AIC_reduced = AIC(model_reduced), AIC_full = AIC(model_full))
+}
+
+# Sample scores (first two LVs) joined with raw environmental values
+lv_df <- function(m) {
+  as.data.frame(getLV(m)[, 1:2, drop = FALSE]) %>%
+    setNames(c("LV1", "LV2")) %>%
+    rownames_to_column("sample_id") %>%
+    left_join(env %>% select(sample_id, site, any_of(c(names(env_vars), names(env_vars_N)))),
+              by = "sample_id")
+}
+
+# Taxa with the largest loadings (length of the loading vector on LV1-LV2)
+top_loadings <- function(m, n = 10, labels = NULL) {
+  th <- m$params$theta[, 1:2, drop = FALSE]
+  out <- data.frame(taxon = rownames(th), LV1 = th[, 1], LV2 = th[, 2]) %>%
+    mutate(length = sqrt(LV1^2 + LV2^2)) %>%
+    slice_max(length, n = n, with_ties = FALSE)
+  out$label <- if (is.null(labels)) out$taxon else unname(labels[out$taxon])
+  out
+}
+
+# Ordination of samples coloured by an environmental variable, optionally with top taxa.
+# Taxon loadings are rescaled to the range of the sample scores for display only.
+ord_plot <- function(m, colour_var, title, n_taxa = 0, labels = NULL, var_labels = env_vars) {
+  df <- lv_df(m)
+  p <- ggplot(df, aes(LV1, LV2)) +
+    geom_point(aes(colour = .data[[colour_var]], shape = site), size = 3, stroke = 1.1) +
+    scale_colour_viridis_c(name = parse(text = var_labels[[colour_var]])) +
+    scale_shape_manual(values = shape_sites, name = "Site") +
+    labs(x = "Latent variable 1", y = "Latent variable 2", title = title) +
+    theme(legend.position = "bottom", panel.grid = element_blank())
+  if (n_taxa > 0) {
+    tl <- top_loadings(m, n_taxa, labels)
+    k  <- 0.8 * max(abs(df[, c("LV1", "LV2")])) / max(abs(tl[, c("LV1", "LV2")]))
+    tl <- tl %>% mutate(LV1 = LV1 * k, LV2 = LV2 * k)
+    p <- p +
+      geom_point(data = tl, aes(LV1, LV2), shape = 3, size = 2, inherit.aes = FALSE) +
+      geom_text_repel(data = tl, aes(LV1, LV2, label = label), size = 3,
+                      max.overlaps = 20, box.padding = 0.3, point.padding = 0.5,
+                      inherit.aes = FALSE)
+  }
+  p
+}
+
+# Coefficients with Wald 95% CI, p-values and adjusted p-values (per predictor)
+coef_table <- function(m) {
+  est <- m$params$Xcoef
+  se  <- m$sd$Xcoef
+  if (is.null(se)) stop("Model has no standard errors: refit with sd.errors = TRUE")
+  dimnames(se) <- dimnames(est)
+  long <- function(x, v) as.data.frame(x) %>% rownames_to_column("Taxon") %>%
+    pivot_longer(-Taxon, names_to = "Variable", values_to = v)
+  long(est, "Estimate") %>%
+    left_join(long(se, "SE"), by = c("Taxon", "Variable")) %>%
+    mutate(Taxon = normalize_taxa(Taxon),
+           cilow = Estimate - qnorm(0.975) * SE,
+           ciup  = Estimate + qnorm(0.975) * SE,
+           ci_excludes_0 = cilow > 0 | ciup < 0,
+           p = 2 * pnorm(-abs(Estimate / SE))) %>%
+    group_by(Variable) %>%
+    mutate(p_adj = p.adjust(p, method = p_adj_method)) %>%
+    ungroup()
+}
+
+# Phylum of each genus: most common phylum among its ASVs
+genus_phylum <- tax_df %>%
+  mutate(Genus = ifelse(is.na(Genus), "Unidentified", Genus)) %>%
+  filter(!is.na(Phylum)) %>%
+  dplyr::count(Genus, Phylum) %>%
+  group_by(Genus) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(Genus, Phylum) %>%
+  mutate(Phylum = ifelse(Genus == "Unidentified", "Unidentified", Phylum))
+
+# Coloured (phylum) and italic (genus) axis labels for ggtext::element_markdown
+taxon_labels <- function(taxa) {
+  ph  <- as.character(genus_phylum$Phylum[match(taxa, genus_phylum$Genus)])
+  col <- unname(phylum_colors[ph])
+  col[is.na(col)] <- "black"
+  txt <- ifelse(taxa == "Unidentified", taxa, paste0("<i>", taxa, "</i>"))
+  setNames(paste0("<span style='color:", col, "'>", txt, "</span>"), taxa)
+}
+
+# Genus label of each ASV (for biplots)
+asv_genus_label <- setNames(ifelse(is.na(tax_df$Genus), "Unidentified", tax_df$Genus), tax_df$ASV)
+```
+
+#--------------------------
+
+# 1. ASVs in the top 50 most abundant genera
+
+Unassigned ASVs are treated as one group ("Unidentified"). With `drop_unidentified = TRUE` this group is excluded and the top 50 are 50 named genera; with `FALSE` (original analysis) unassigned ASVs are included if that group ranks in the top 50.
+
+```{r asv top50 data}
+asv_tot <- colSums(community.counts)
+asv_gen <- tax_df$Genus[match(names(asv_tot), tax_df$ASV)]
+asv_gen[is.na(asv_gen)] <- "Unidentified"
+
+genus_tot <- tapply(asv_tot, asv_gen, sum)
+if (drop_unidentified) genus_tot <- genus_tot[names(genus_tot) != "Unidentified"]
+top50_genera <- names(sort(genus_tot, decreasing = TRUE))[1:50]
+top_asvs     <- names(asv_tot)[asv_gen %in% top50_genera]
+
+d_asv <- prep_gllvm(community.counts[, top_asvs, drop = FALSE])
+```
+
+## 1.1 Data exploration
+
+```{r asv mean variance}
+mean_var_plot <- function(Y, title) {
+  data.frame(mean = colMeans(Y), var = apply(Y, 2, var)) %>%
+    filter(mean > 0) %>%
+    ggplot(aes(mean, var)) +
+    geom_point(alpha = 0.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +   # Poisson: variance = mean
+    scale_x_log10() + scale_y_log10() +
+    labs(x = "Mean count", y = "Variance", title = title) +
+    theme(panel.grid = element_blank())
+}
+
+p_mv_asv <- mean_var_plot(d_asv$Y, "ASVs of the top 50 genera")
+p_mv_asv
+save_fig(p_mv_asv, "F1_mean_variance_asv", width = 6, height = 6)
+```
+
+Variance increases much faster than the mean (points far above the 1:1 line): the data are overdispersed, so a negative binomial distribution is used.
+
+#--------------------------
+
+# 2. GLLVM ASVs: unconstrained models
+
+## 2.1 Number of latent variables
+
+Null models (no predictors) with 0, 1 and 2 latent variables. Standard errors are not needed to compare them.
+
+```{r asv null models}
+gllvm_null0lv_reef <- fit_or_load("gllvm_null0lv_reef", fit_nb(d_asv, num.lv = 0, sd.errors = FALSE))
+gllvm_null1lv_reef <- fit_or_load("gllvm_null1lv_reef", fit_nb(d_asv, num.lv = 1, sd.errors = FALSE))
+gllvm_null_reef    <- fit_or_load("gllvm_null_reef",    fit_nb(d_asv, num.lv = 2, sd.errors = FALSE))  # 2 LV
+
+for (nm in c("gllvm_null0lv_reef", "gllvm_null1lv_reef", "gllvm_null_reef"))
+  check_model_data(get(nm), d_asv, nm)
+
+aic_null_asv <- aic_table(list("~ null, 0 LV" = gllvm_null0lv_reef,
+                               "~ null, 1 LV" = gllvm_null1lv_reef,
+                               "~ null, 2 LV" = gllvm_null_reef), "Model (ASVs)")
+aic_null_asv
+```
+
+Previous run: AIC 0 LV = 212428.5, 1 LV = 207005.5, 2 LV = 205269.7. AIC is lowest with 2 latent variables, so all models below use 2 LVs.
+
+Residual diagnostics of the 2-LV null model
+
+```{r asv null residuals, fig.width = 12, fig.height = 6}
+save_base_fig("F2_residuals_null_asv", function() {
+  par(mfrow = c(1, 2))
+  plot(gllvm_null_reef, which = 1:2, var.colors = 1, n.plot = 100)
+}, width = 12, height = 6)
+```
+
+Slight clustering of fitted values around 0-5, probably from the many zeros; acceptable.
+
+## 2.2 Unconstrained ordination
+
+```{r asv null ordination}
+ord_null_asv <- lapply(names(env_vars), function(v)
+  ord_plot(gllvm_null_reef, v, title = "Unconstrained GLLVM (ASVs, 2 LV)"))
+names(ord_null_asv) <- names(env_vars)
+ord_null_asv
+
+for (i in seq_along(ord_null_asv))
+  save_fig(ord_null_asv[[i]], paste0("F3", letters[i], "_ordination_null_asv_", names(ord_null_asv)[i]),
+           width = 8, height = 8)
+```
+
+## 2.3 Biplot
+
+Samples and the 10 ASVs with the largest loadings (labelled by genus).
+
+```{r asv null biplot}
+biplot_null_reef <- ord_plot(gllvm_null_reef, "mean.PO4", "Unconstrained GLLVM (ASVs, 2 LV)",
+                             n_taxa = 10, labels = asv_genus_label)
+biplot_null_reef
+save_fig(biplot_null_reef, "F4_biplot_null_asv", width = 8, height = 8)
+```
+
+#--------------------------
+
+# 3. GLLVM ASVs + environment
+
+```{r asv env models}
+gllvm_din_reef    <- fit_or_load("gllvm_din",          fit_nb(d_asv, ~ DIN))          # file name kept
+gllvm_chla_reef   <- fit_or_load("gllvm_chla_reef",    fit_nb(d_asv, ~ chla))
+gllvm_temp_reef   <- fit_or_load("gllvm_temp_reef",    fit_nb(d_asv, ~ temperature))
+gllvm_po4_reef    <- fit_or_load("gllvm_po4_reef",     fit_nb(d_asv, ~ mean.PO4))
+gllvm_dinpo4_reef <- fit_or_load("gllvm_dinpo4_reef",  fit_nb(d_asv, ~ mean.PO4 + DIN))
+gllvm_all_reef    <- fit_or_load("gllvm_all_reef",     fit_nb(d_asv, ~ mean.PO4 + DIN + temperature + chla))
+
+for (nm in c("gllvm_din_reef", "gllvm_chla_reef", "gllvm_temp_reef",
+             "gllvm_po4_reef", "gllvm_dinpo4_reef", "gllvm_all_reef"))
+  check_model_data(get(nm), d_asv, nm)
+beep(4)
+```
+
+## 3.1 AIC table
+
+```{r asv aic}
+aic_asv <- aic_table(list(
+  "~ null, 0 LV"                     = gllvm_null0lv_reef,
+  "~ null, 1 LV"                     = gllvm_null1lv_reef,
+  "~ null, 2 LV"                     = gllvm_null_reef,
+  "~ Chl-a"                          = gllvm_chla_reef,
+  "~ Temperature"                    = gllvm_temp_reef,
+  "~ DIN"                            = gllvm_din_reef,
+  "~ PO4"                            = gllvm_po4_reef,
+  "~ DIN + PO4"                      = gllvm_dinpo4_reef,
+  "~ Chl-a + Temperature + PO4 + DIN" = gllvm_all_reef), "Model (ASVs)")
+aic_asv
+
+save_tab(aic_asv, "T1_aic_gllvm_asv")
+```
+
+Previous run: lowest AIC for ~PO4 (205042.7), then the 2-LV null (205269.7) and ~DIN + PO4 (205492.5). DIN + PO4 is used for the plots below so that the effects of both nutrients can be compared, although PO4 alone fits best.
+
+## 3.2 Biplots
+
+```{r asv env biplots}
+biplot_dinpo4_reef <- ord_plot(gllvm_dinpo4_reef, "mean.PO4", "GLLVM ASVs: ~ DIN + PO4",
+                               n_taxa = 5, labels = asv_genus_label)
+biplot_po4_reef    <- ord_plot(gllvm_po4_reef, "mean.PO4", "GLLVM ASVs: ~ PO4",
+                               n_taxa = 5, labels = asv_genus_label)
+biplot_dinpo4_reef
+biplot_po4_reef
+
+save_fig(biplot_dinpo4_reef, "F5_biplot_dinpo4_asv", width = 8, height = 8)
+save_fig(biplot_po4_reef,    "F6_biplot_po4_asv",    width = 8, height = 8)
+```
+
+## 3.3 Coefficient plots
+
+```{r asv coefplot}
+save_base_fig("F7_coefplot_dinpo4_asv", function()
+  coefplot.gllvm(gllvm_dinpo4_reef, cex.ylab = 0.5, y.label = FALSE,
+                 mar = c(4, 2, 2, 1), order = FALSE))
+```
+
+Coefficients of each ASV for both nutrients, ordered by the DIN coefficient
+
+```{r asv coef lineplot}
+coef_dinpo4_reef <- coef_table(gllvm_dinpo4_reef) %>%
+  mutate(Taxon = reorder(Taxon, ifelse(Variable == "DIN", Estimate, NA), FUN = function(x) mean(x, na.rm = TRUE)))
+
+coef_lineplot <- ggplot(coef_dinpo4_reef, aes(x = Taxon, y = Estimate, colour = Variable)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_colour_manual(values = c(DIN = "#185563", mean.PO4 = "#F26419"),
+                      labels = c(DIN = "DIN", mean.PO4 = expression(PO[4]^"3-"))) +
+  labs(x = "ASV", y = "Coefficient estimate", colour = NULL,
+       title = "ASV-level coefficients (~ DIN + PO4)") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        panel.grid = element_blank(), legend.position = "bottom")
+coef_lineplot
+
+save_fig(coef_lineplot, "F8_coef_lineplot_dinpo4_asv", width = 11, height = 6)
+```
+
+#--------------------------------------
+
+# 4. Top 5 phyla
+
+Models on the summed counts of the 5 most abundant phyla.
+
+```{r phylum data}
+phylum_tot <- tapply(asv_tot, tax_df$Phylum[match(names(asv_tot), tax_df$ASV)], sum)
+top5_phyla <- names(sort(phylum_tot, decreasing = TRUE))[1:5]
+top5_phyla
+
+d_phylum <- prep_gllvm(aggregate_taxa(community.counts, "Phylum", keep = top5_phyla))
+```
+
+## 4.1 Models
+
+All models use a random **site** intercept. (The original DIN + PO4 model used `(1|site_type)`, which is constant in the reef-only data: that model must be refitted, so its file name is new.)
+
+```{r phylum models}
+gllvm_null_top5_phylum_reef   <- fit_or_load("gllvm_null_top5_phylum_reef",  fit_nb(d_phylum))
+gllvm_din_top5_phylum_reef    <- fit_or_load("gllvm_din_top5_phylum_reef",   fit_nb(d_phylum, ~ DIN))
+gllvm_po4_top5_phylum_reef    <- fit_or_load("gllvm_po4_top5_phylum_reef",   fit_nb(d_phylum, ~ mean.PO4))
+gllvm_dinpo4_top5_phylum_reef <- fit_or_load("gllvm_dinpo4_top5_phylum_site_reef",
+                                             fit_nb(d_phylum, ~ mean.PO4 + DIN))
+gllvm_all_top5_phylum_reef    <- fit_or_load("gllvm_all_top5_phylum_reef",
+                                             fit_nb(d_phylum, ~ mean.PO4 + DIN + temperature + chla))
+
+for (nm in c("gllvm_null_top5_phylum_reef", "gllvm_din_top5_phylum_reef", "gllvm_po4_top5_phylum_reef",
+             "gllvm_dinpo4_top5_phylum_reef", "gllvm_all_top5_phylum_reef"))
+  check_model_data(get(nm), d_phylum, nm)
+beep(3)
+```
+
+## 4.2 AIC table
+
+```{r phylum aic}
+aic_phylum <- aic_table(list(
+  "~ null, 2 LV"                     = gllvm_null_top5_phylum_reef,
+  "~ DIN"                            = gllvm_din_top5_phylum_reef,
+  "~ PO4"                            = gllvm_po4_top5_phylum_reef,
+  "~ DIN + PO4"                      = gllvm_dinpo4_top5_phylum_reef,
+  "~ Chl-a + Temperature + PO4 + DIN" = gllvm_all_top5_phylum_reef), "Model (top 5 phyla)")
+aic_phylum
+
+save_tab(aic_phylum, "T2_aic_gllvm_top5_phyla")
+```
+
+## 4.3 Biplot DIN + PO4
+
+```{r phylum biplot}
+biplot_dinpo4_top5_phylum_reef <- ord_plot(gllvm_dinpo4_top5_phylum_reef, "mean.PO4",
+                                           "GLLVM top 5 phyla: ~ DIN + PO4", n_taxa = 5)
+biplot_dinpo4_top5_phylum_reef
+save_fig(biplot_dinpo4_top5_phylum_reef, "F9_biplot_dinpo4_top5_phyla", width = 8, height = 8)
+```
+
+## 4.4 Coefficient plots
+
+```{r phylum coefplot}
+save_base_fig("F10_coefplot_dinpo4_top5_phyla", function()
+  coefplot.gllvm(gllvm_dinpo4_top5_phylum_reef, cex.ylab = 0.7, y.label = TRUE, mar = c(4, 8, 2, 1)))
+
+coef_dinpo4_top5_phylum <- coef_table(gllvm_dinpo4_top5_phylum_reef)
+
+coef_phylum_plot <- ggplot(coef_dinpo4_top5_phylum,
+                           aes(x = Estimate, y = Taxon, colour = Variable)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_errorbar(aes(xmin = cilow, xmax = ciup), width = 0, position = position_dodge(width = 0.5)) +
+  geom_point(size = 2, position = position_dodge(width = 0.5)) +
+  scale_colour_manual(values = c(DIN = "#185563", mean.PO4 = "#F26419"),
+                      labels = c(DIN = "DIN", mean.PO4 = expression(PO[4]^"3-"))) +
+  labs(x = "Coefficient (95% CI)", y = NULL, colour = NULL,
+       title = "Top 5 phyla (~ DIN + PO4)") +
+  theme(panel.grid = element_blank(), legend.position = "bottom")
+coef_phylum_plot
+
+save_fig(coef_phylum_plot, "F11_coef_dinpo4_top5_phyla", width = 8, height = 5)
+```
+
+#--------------------------------------
+
+# 5. All genera
+
+All genera, keeping genera with ≥ 1 read in ≥ 10% of samples. Unassigned ASVs are pooled as "Unidentified", which is excluded when `drop_unidentified = TRUE`. This is the dataset of `gllvm_all_genus_reef`, analysed in more detail in 6b.gllvm_all_genera_reefs.Rmd.
+
+```{r genus data}
+Y_genus <- aggregate_taxa(community.counts, "Genus")
+Y_genus <- Y_genus[rowSums(Y_genus) > 0, , drop = FALSE]
+Y_genus <- Y_genus[, colMeans(Y_genus >= 1) >= 0.10, drop = FALSE]
+
+d_genus <- prep_gllvm(Y_genus)
+```
+
+## 5.1 Models
+
+The model files keep their original base names ("top50" in the name, but they contain all genera ≥ 10% prevalence), plus the settings suffix. The original null model was fitted with **0 LV** (despite its "2lv" file name), and its loading chunk read the DIN + PO4 file instead, which is why both had AIC 25161.97. Here the 0-LV null keeps that file name and a true 2-LV null is added.
+
+`reported_model` sets which model is used for the checks, coefficient plot and co-occurrence. Because the predictors vary only between 8 sites, a model with one or two predictors is recommended over the full four-predictor model.
+
+```{r genus models}
+gllvm_null0lv_genus_reef     <- fit_or_load("gllvm_null2lv_top50_genus_reef",    # contains the 0-LV null
+                                            fit_nb(d_genus, num.lv = 0, sd.errors = FALSE))
+gllvm_null2lv_genus_reef     <- fit_or_load("gllvm_null2lv_genus_reef",
+                                            fit_nb(d_genus, num.lv = 2, sd.errors = FALSE))
+gllvm_chla_genus_reef        <- fit_or_load("gllvm_chla_top50_genus_reef",   fit_nb(d_genus, ~ chla))
+gllvm_temp_genus_reef        <- fit_or_load("gllvm_temp_top50_genus_reef",   fit_nb(d_genus, ~ temperature))
+gllvm_din_genus_reef         <- fit_or_load("gllvm_din_top50_genus_reef",    fit_nb(d_genus, ~ DIN))
+gllvm_po4_genus_reef         <- fit_or_load("gllvm_po4_top50_genus_reef",    fit_nb(d_genus, ~ mean.PO4))
+gllvm_dinpo4_genus_reef      <- fit_or_load("gllvm_dinpo4_top50_genus_reef", fit_nb(d_genus, ~ mean.PO4 + DIN))
+gllvm_allnochla_genus_reef   <- fit_or_load("gllvm_allnochla_top50_genus_reef",
+                                            fit_nb(d_genus, ~ mean.PO4 + DIN + temperature))
+gllvm_all_genus_reef         <- fit_or_load("gllvm_ALL_genus_reef",
+                                            fit_nb(d_genus, ~ mean.PO4 + DIN + temperature + chla))
+
+genus_models <- list(
+  "~ null, 0 LV"                      = gllvm_null0lv_genus_reef,
+  "~ null, 2 LV"                      = gllvm_null2lv_genus_reef,
+  "~ Chl-a"                           = gllvm_chla_genus_reef,
+  "~ Temperature"                     = gllvm_temp_genus_reef,
+  "~ DIN"                             = gllvm_din_genus_reef,
+  "~ PO4"                             = gllvm_po4_genus_reef,
+  "~ DIN + PO4"                       = gllvm_dinpo4_genus_reef,
+  "~ Temperature + PO4 + DIN"         = gllvm_allnochla_genus_reef,
+  "~ Chl-a + Temperature + PO4 + DIN" = gllvm_all_genus_reef)
+
+for (nm in names(genus_models)) check_model_data(genus_models[[nm]], d_genus, nm)
+
+# Model used for checks, coefficients and co-occurrence (one of the names above)
+reported_model <- "~ DIN + PO4"
+stopifnot(reported_model %in% names(genus_models))
+reported_genus_model <- genus_models[[reported_model]]
+```
+
+## 5.2 AIC table and likelihood-ratio tests
+
+```{r genus aic}
+aic_genus <- aic_table(genus_models, "Model (all genera)")
+aic_genus
+
+# LRTs between nested models with the same number of LVs
+lrt_genus <- bind_rows(
+  "PO4 vs null"                 = compare_gllvm(gllvm_null2lv_genus_reef, gllvm_po4_genus_reef),
+  "DIN vs null"                 = compare_gllvm(gllvm_null2lv_genus_reef, gllvm_din_genus_reef),
+  "DIN + PO4 vs PO4"            = compare_gllvm(gllvm_po4_genus_reef,     gllvm_dinpo4_genus_reef),
+  "All vs DIN + PO4"            = compare_gllvm(gllvm_dinpo4_genus_reef,  gllvm_all_genus_reef),
+  "All vs no Chl-a"             = compare_gllvm(gllvm_allnochla_genus_reef, gllvm_all_genus_reef),
+  .id = "Comparison") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+lrt_genus
+
+save_tab(list("AIC" = aic_genus, "Likelihood-ratio tests" = lrt_genus), "T3_aic_lrt_gllvm_all_genera")
+```
+
+Previous run (no offset, "Unidentified" included): lowest AIC for ~PO4 (25082.19), then ~DIN (25114.64); the full model had the highest AIC (25236.17). Check the ranking again with the current settings before choosing `reported_model`.
+
+## 5.3 Reported model checks
+
+```{r genus checks, fig.width = 12, fig.height = 6}
+reported_model
+reported_genus_model$convergence
+
+save_base_fig("F12_residuals_reported_genera", function() {
+  par(mfrow = c(1, 2))
+  plot(reported_genus_model, which = 1:2, var.colors = 1, n.plot = 100)
+}, width = 12, height = 6)
+```
+
+## 5.4 Coefficient plot (all genera)
+
+All genera of the reported model, with non-significant coefficients (according to `sig_rule`) in grey. The significant-only version (all-genera coefficient system) is in 6b.gllvm_all_genera_reefs.Rmd.
+
+```{r genus coef}
+coef_all_genus <- coef_table(reported_genus_model) %>%
+  left_join(genus_phylum, by = c("Taxon" = "Genus")) %>%
+  mutate(Phylum = ifelse(is.na(Phylum), "Unidentified", Phylum),
+         Phylum = factor(Phylum, levels = unique(c(names(phylum_colors), sort(unique(Phylum))))),
+         significant = if (sig_rule == "ci") ci_excludes_0 else p_adj < 0.05,
+         sig_col = ifelse(significant, "black", "grey60")) %>%
+  arrange(Phylum, Estimate)
+
+genus_order <- coef_all_genus %>%
+  group_by(Taxon, Phylum) %>% summarise(m = mean(Estimate), .groups = "drop") %>%
+  arrange(Phylum, m) %>% pull(Taxon)
+
+genus_lab <- taxon_labels(genus_order)
+
+coef_reef_genus_plot <- coef_all_genus %>%
+  mutate(Taxon = factor(Taxon, levels = rev(genus_order))) %>%
+  ggplot(aes(y = Taxon, x = Estimate)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_errorbar(aes(xmin = cilow, xmax = ciup, colour = sig_col), width = 0) +
+  geom_point(aes(colour = sig_col), size = 1.5) +
+  scale_colour_identity() +
+  scale_y_discrete(labels = genus_lab) +
+  facet_wrap(~ Variable, nrow = 1, scales = "free_x",
+             labeller = as_labeller(env_vars, label_parsed)) +
+  labs(y = NULL, x = "Coefficient (95% CI)", title = paste("Reefs: all genera,", reported_model)) +
+  theme(axis.text.y = element_markdown(size = 6),
+        strip.text  = element_text(size = 12, face = "bold"),
+        panel.grid  = element_blank())
+coef_reef_genus_plot
+
+save_fig(coef_reef_genus_plot, "F13_coef_all_genera",
+         width = 12, height = max(8, 0.12 * length(genus_order) + 2))
+
+write.csv(coef_all_genus %>% mutate(site_type = "reef", model = reported_model),
+          file.path(tab_dir, "T4_coefficients_all_genera.csv"), row.names = FALSE)
+```
+
+#-------------------------------------
+
+# 6. Co-occurrence patterns (all genera)
+
+Residual correlations without (null, 2 LV) and with the environmental predictors (reported model). To keep the plots readable, only the 40 genera with the strongest residual correlations are shown.
+
+```{r cooccurrence, fig.width = 10, fig.height = 10}
+cr_null_genus <- getResidualCor(gllvm_null2lv_genus_reef)
+cr_all_genus  <- getResidualCor(reported_genus_model)
+
+top_cor <- function(cr, n = 40) {
+  keep <- names(sort(rowMeans(abs(cr - diag(diag(cr)))), decreasing = TRUE))[seq_len(min(n, nrow(cr)))]
+  cr <- cr[keep, keep]
+  cr[order.single(cr), order.single(cr)]
+}
+
+draw_cor <- function(cr) function() {
+  par(mar = c(4, 4, 2, 2))
+  corrplot(top_cor(cr), diag = FALSE, type = "lower", method = "square",
+           tl.cex = 0.5, tl.srt = 45, tl.col = "black")
+}
+
+save_base_fig("F14a_residual_cor_null_genera", draw_cor(cr_null_genus), 10, 10)
+save_base_fig("F14b_residual_cor_reported_genera", draw_cor(cr_all_genus), 10, 10)
+```
+
+No clear co-occurrence structure between genera.
+
+#-----------------------------------------
+
+# 7. GLLVM nitrogen species (ASVs of the top 50 genera)
+
+Same ASV data as section 1, with the scaled nitrogen species as predictors.
+
+```{r N data}
+env_scaled_N <- read.csv("data/environmental_scaled_Nall_reefs.csv", row.names = 1)
+stopifnot(all(names(env_vars_N) %in% colnames(env_scaled_N)))
+
+d_asv_N <- prep_gllvm(community.counts[, top_asvs, drop = FALSE], X_source = env_scaled_N)
+```
+
+## 7.1 Null model and ordination
+
+```{r N null}
+gllvm_N_null_reef <- fit_or_load("gllvm_N_null_reef", fit_nb(d_asv_N, num.lv = 2, sd.errors = FALSE))
+check_model_data(gllvm_N_null_reef, d_asv_N, "gllvm_N_null_reef")
+
+ord_null_N <- lapply(names(env_vars_N), function(v)
+  ord_plot(gllvm_N_null_reef, v, "Unconstrained GLLVM (ASVs, N species data)", var_labels = env_vars_N))
+names(ord_null_N) <- names(env_vars_N)
+ord_null_N
+
+for (i in seq_along(ord_null_N))
+  save_fig(ord_null_N[[i]], paste0("F15", letters[i], "_ordination_null_N_", names(ord_null_N)[i]),
+           width = 8, height = 8)
+
+biplot_null_N_reef <- ord_plot(gllvm_N_null_reef, "mean.NH4", "Unconstrained GLLVM (ASVs, N species data)",
+                               n_taxa = 10, labels = asv_genus_label, var_labels = env_vars_N)
+biplot_null_N_reef
+save_fig(biplot_null_N_reef, "F16_biplot_null_N_asv", width = 8, height = 8)
+```
+
+## 7.2 GLLVM + N
+
+```{r N models}
+gllvm_no3_reef    <- fit_or_load("gllvm_no3_reef",    fit_nb(d_asv_N, ~ mean.NO3))
+gllvm_no2_reef    <- fit_or_load("gllvm_no2_reef",    fit_nb(d_asv_N, ~ mean.NO2))
+gllvm_nh4_reef    <- fit_or_load("gllvm_nh4_reef",    fit_nb(d_asv_N, ~ mean.NH4))
+gllvm_nh4no3_reef <- fit_or_load("gllvm_nh4no3_reef", fit_nb(d_asv_N, ~ mean.NO3 + mean.NH4))
+gllvm_Nall_reef   <- fit_or_load("gllvm_Nall_reef",   fit_nb(d_asv_N, ~ mean.NO3 + mean.NH4 + mean.NO2))
+
+aic_N <- aic_table(list("~ null, 2 LV"   = gllvm_N_null_reef,
+                        "~ NO3"          = gllvm_no3_reef,
+                        "~ NO2"          = gllvm_no2_reef,
+                        "~ NH4"          = gllvm_nh4_reef,
+                        "~ NO3 + NH4"    = gllvm_nh4no3_reef,
+                        "~ NO3 + NH4 + NO2" = gllvm_Nall_reef), "Model (ASVs, N species)")
+aic_N
+save_tab(aic_N, "T5_aic_gllvm_N_asv")
+```
+
+Previous run: lowest AIC for ~NO3 (204925.9) and ~all N species (205451.9).
+
+## 7.3 Biplots and coefficient plots
+
+```{r N plots}
+biplot_no3_reef  <- ord_plot(gllvm_no3_reef,  "mean.NO3", "GLLVM ASVs: ~ NO3",
+                             n_taxa = 5, labels = asv_genus_label, var_labels = env_vars_N)
+biplot_Nall_reef <- ord_plot(gllvm_Nall_reef, "mean.NO3", "GLLVM ASVs: ~ NO3 + NH4 + NO2",
+                             n_taxa = 5, labels = asv_genus_label, var_labels = env_vars_N)
+biplot_no3_reef
+biplot_Nall_reef
+save_fig(biplot_no3_reef,  "F17_biplot_no3_asv",  width = 8, height = 8)
+save_fig(biplot_Nall_reef, "F18_biplot_Nall_asv", width = 8, height = 8)
+
+save_base_fig("F19_coefplot_no3_asv", function()
+  coefplot.gllvm(gllvm_no3_reef, cex.ylab = 0.5, y.label = FALSE, mar = c(4, 2, 2, 1)))
+save_base_fig("F20_coefplot_Nall_asv", function()
+  coefplot.gllvm(gllvm_Nall_reef, cex.ylab = 0.5, y.label = FALSE, mar = c(4, 2, 2, 1)))
+```
+
+#--------------------------------------
+
+# 8. Top 50 genera + N
+
+Summed counts of the 50 most abundant genera (unassigned ASVs pooled as "Unidentified"), with nitrogen species as predictors.
+
+```{r top50 genus N data}
+d_genus50_N <- prep_gllvm(aggregate_taxa(community.counts, "Genus", keep = top50_genera),
+                          X_source = env_scaled_N)
+```
+
+```{r top50 genus N models}
+gllvm_no3_top50_genus_reef  <- fit_or_load("gllvm_no3_top50_genus_reef",  fit_nb(d_genus50_N, ~ mean.NO3))
+gllvm_no2_top50_genus_reef  <- fit_or_load("gllvm_no2_top50_genus_reef",  fit_nb(d_genus50_N, ~ mean.NO2))
+gllvm_nh4_top50_genus_reef  <- fit_or_load("gllvm_nh4_top50_genus_reef",  fit_nb(d_genus50_N, ~ mean.NH4))
+gllvm_Nall_top50_genus_reef <- fit_or_load("gllvm_Nall_top50_genus_reef",
+                                           fit_nb(d_genus50_N, ~ mean.NO3 + mean.NH4 + mean.NO2))
+
+# AIC of the GENUS models (the original chunk listed the ASV models here)
+aic_genus50_N <- aic_table(list("~ NO3"             = gllvm_no3_top50_genus_reef,
+                                "~ NO2"             = gllvm_no2_top50_genus_reef,
+                                "~ NH4"             = gllvm_nh4_top50_genus_reef,
+                                "~ NO3 + NH4 + NO2" = gllvm_Nall_top50_genus_reef),
+                           "Model (top 50 genera, N species)")
+aic_genus50_N
+save_tab(aic_genus50_N, "T6_aic_gllvm_N_top50_genera")
+```
+
+## 8.1 Coefficient plot
+
+```{r top50 genus N coef}
+save_base_fig("F21_coefplot_Nall_top50_genera", function()
+  coefplot.gllvm(gllvm_Nall_top50_genus_reef, cex.ylab = 0.5, mar = c(4, 8, 2, 1)))
+```

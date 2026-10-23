@@ -1,0 +1,53 @@
+"Function","Phylum","ASVs","Reads (% of all reads)","% of function"
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota",81,38.79,100
+"Chemoheterotrophy","Proteobacteria",219,10.79,43.7
+"Chemoheterotrophy","Bacteroidota",314,10.07,40.8
+"Chemoheterotrophy","Verrucomicrobiota",50,1.85,7.5
+"Chemoheterotrophy","Planctomycetota",83,1.48,6
+"Chemoheterotrophy","Fusobacteriota",5,0.22,0.9
+"Chemoheterotrophy","Acidobacteriota",7,0.17,0.7
+"Chemoheterotrophy","Deinococcota",3,0.06,0.2
+"Chemoheterotrophy","Desulfobacterota",2,0.03,0.1
+"Chemoheterotrophy","Firmicutes",1,0.02,0.1
+"Chemoheterotrophy","Spirochaetota",1,0.02,0.1
+"Chemoheterotrophy","Actinobacteriota",1,0,0
+"Chemoheterotrophy","Chloroflexi",1,0,0
+"Aerobic chemoheterotrophy","Proteobacteria",142,8.89,43.6
+"Aerobic chemoheterotrophy","Bacteroidota",250,8,39.2
+"Aerobic chemoheterotrophy","Verrucomicrobiota",50,1.85,9.1
+"Aerobic chemoheterotrophy","Planctomycetota",83,1.48,7.3
+"Aerobic chemoheterotrophy","Acidobacteriota",7,0.17,0.9
+"Aerobic chemoheterotrophy","Actinobacteriota",1,0,0
+"Fermentation","Proteobacteria",126,5.43,82.7
+"Fermentation","Bacteroidota",19,0.81,12.4
+"Fermentation","Fusobacteriota",5,0.22,3.3
+"Fermentation","Deinococcota",3,0.06,0.9
+"Fermentation","Firmicutes",1,0.02,0.3
+"Fermentation","Desulfobacterota",1,0.01,0.2
+"Fermentation","Spirochaetota",1,0.02,0.2
+"Anaerobic chemoheterotrophy","Bacteroidota",64,2.07,48
+"Anaerobic chemoheterotrophy","Proteobacteria",77,1.91,44.1
+"Anaerobic chemoheterotrophy","Fusobacteriota",5,0.22,5
+"Anaerobic chemoheterotrophy","Deinococcota",3,0.06,1.4
+"Anaerobic chemoheterotrophy","Desulfobacterota",2,0.03,0.6
+"Anaerobic chemoheterotrophy","Firmicutes",1,0.02,0.5
+"Anaerobic chemoheterotrophy","Spirochaetota",1,0.02,0.4
+"Anaerobic chemoheterotrophy","Chloroflexi",1,0,0
+"Nitrate reduction","Proteobacteria",22,2.83,85.9
+"Nitrate reduction","Bacteroidota",10,0.45,13.8
+"Nitrate reduction","Verrucomicrobiota",1,0.01,0.3
+"Cellulolysis","Bacteroidota",19,0.55,82.4
+"Cellulolysis","Proteobacteria",3,0.12,17.6
+"Nitrification (= aerobic ammonia oxidation)","Crenarchaeota",9,0.49,98.5
+"Nitrification (= aerobic ammonia oxidation)","Proteobacteria",1,0.01,1.5
+"Aromatic compound degradation","Proteobacteria",6,0.4,100
+"Nitrate respiration (= nitrogen respiration)","Proteobacteria",3,0.24,86.3
+"Nitrate respiration (= nitrogen respiration)","Bacteroidota",1,0.04,13.7
+"Respiration of sulfur compounds","Desulfobacterota",7,0.16,81.1
+"Respiration of sulfur compounds","Proteobacteria",1,0.03,17.2
+"Respiration of sulfur compounds","Firmicutes",1,0,1.7
+"Chitinolysis","Proteobacteria",3,0.12,69.5
+"Chitinolysis","Bacteroidota",1,0.05,30.5
+"Sulfate respiration","Desulfobacterota",7,0.16,100
+"Dark hydrogen oxidation","Desulfobacterota",5,0.15,100
+"Xylanolysis","Proteobacteria",3,0.12,100
