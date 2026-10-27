@@ -1,9 +1,7 @@
 # Benthic cyanobacterial mats of the reefs of Raja Ampat: analysis scripts
 
-Run the scripts in order from the project folder (`bcms_reefs_rajaampat.Rproj`). Each script writes its
-figures to `figures/<script>/F<n>_<name>.pdf` and its tables to `outputs/<script>/T<n>_<name>.docx` (+ `.csv`).
 
-| Script | What it does | Reads | Writes (data) |
+| Script | Aim/Analyses | Input | Output |
 |---|---|---|---|
 | `0.file_rename.R` | Shortens the raw file names | `data/sequences/` | `data/sequences_renamed/` |
 | `1.Illumina_pipeline.Rmd` | DADA2, taxonomy, decontamination, reef subset | raw reads, `data/metadata_all_combined.csv` | `data/bcm_reefs_raja2023.rds` |
@@ -17,9 +15,9 @@ figures to `figures/<script>/F<n>_<name>.pdf` and its tables to `outputs/<script
 Environmental predictors (DIN, PO₄³⁻, temperature, chl-a) are selected in script 3 and standardised
 within the reef mats in each script that uses them (4 and 6).
 
-The raw reads and the intermediate DADA2 files are not in the repository (`.gitignore`). Raw reads: [add ENA/SRA accession].
+The raw reads and the intermediate DADA2 files are not in the repository (`.gitignore`). Raw reads: European Nucleotide Archive (ENA) under project accession PRJEB106188.
 
-## Supplementary material and script outputs (check after rerunning)
+## Supplementary material and script outputs
 
 | Supplement | Script output |
 |---|---|
