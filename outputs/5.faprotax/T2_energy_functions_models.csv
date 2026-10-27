@@ -1,9 +1,0 @@
-"Function","Predictor","n","Estimate","SE","z","p","p_adj","pseudo_R2","dispersion_p","converged"
-"Photoautotrophy","DIN",8,-0.025,0.025,-0.997,0.319,0.74,0.117,0.6,TRUE
-"Chemoheterotrophy","DIN",8,0.015,0.016,0.896,0.37,0.74,0.088,0.768,TRUE
-"Photoautotrophy","mean.PO4",8,-2.934,5.568,-0.527,0.598,0.846,0.034,0.568,TRUE
-"Chemoheterotrophy","mean.PO4",8,-0.998,4.091,-0.244,0.807,0.923,0.007,0.776,TRUE
-"Photoautotrophy","temperature",8,0.967,0.233,4.158,3.21e-05,0.000257,0.703,0.616,TRUE
-"Chemoheterotrophy","temperature",8,-0.645,0.188,-3.439,0.000585,0.00234,0.607,0.672,TRUE
-"Photoautotrophy","chla",8,-0.014,0.179,-0.077,0.939,0.939,0.001,0.592,TRUE
-"Chemoheterotrophy","chla",8,-0.061,0.129,-0.475,0.635,0.846,0.027,0.8,TRUE

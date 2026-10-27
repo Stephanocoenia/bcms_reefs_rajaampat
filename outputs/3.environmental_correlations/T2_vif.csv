@@ -1,0 +1,6 @@
+"Variables","VIF (all variables)","VIF (selected)","Selected"
+"Temperature",3.85,1.26,TRUE
+"Salinity",22.88,NA,FALSE
+"Chl-a",3.62,1.74,TRUE
+"PO4",4.17,1.4,TRUE
+"DIN",12.04,1.23,TRUE

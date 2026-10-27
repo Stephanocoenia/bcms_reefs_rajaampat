@@ -1,0 +1,4 @@
+"Index","Grouping","Chi2","df","p"
+"Richness (q = 0)","site",7.5601,7,0.373
+"Exp. Shannon (q = 1)","site",13.6903,7,0.057
+"Inv. Simpson (q = 2)","site",12.5478,7,0.0839

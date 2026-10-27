@@ -1,1383 +1,227 @@
 ---
-title: "2. Reads and filtering"
+title: "2. Reads and filtering of the reef BCM data"
 author: "Stephanie Martinez"
 date: "2026-09-16"
 output: html_document
-editor_options: 
+editor_options:
   chunk_output_type: console
 ---
 
-# Notebook setup
+```{r root, include = FALSE}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
+
+# Aim
+
+Prepare the reef BCM data for all following scripts:
+
+1. Remove mats with fewer than `min_reads` reads (Methods 2.4).
+2. Remove rare ASVs (present in fewer than `prev_threshold` of the mats).
+3. Total Sum Scaling (TSS).
+4. Stacked table (one row per ASV and mat) with taxonomy and metadata.
+
+Input: `data/bcm_reefs_raja2023.rds` (decontaminated reef BCMs, from 1.Illumina_pipeline.Rmd).
+
+Data products (used by scripts 3–7):
+
+- `data/bcms_filtered_raja2023.rds`: filtered read counts (scripts 3, 6, 7)
+- `data/bcms_filtered&tss_reefs_raja2023.rds`: filtered and TSS-normalised (scripts 4, 5)
+- `data/ASV_taxa_stacked_tss.csv`: stacked TSS table with taxonomy and metadata (script 4)
+- `data/ASV_taxa_table_tss.csv`: TSS table with taxonomy (not used by the scripts; for reference)
+
+Outputs: `figures/2.reads_filtering/F<n>_<name>.pdf` and `outputs/2.reads_filtering/T<n>_<name>.docx` (+ `.csv`).
+
+# Setup
 
 ```{r setup, echo=FALSE, warning=FALSE}
+packages_used <- c("dplyr", "tidyr", "tibble", "ggplot2", "patchwork",
+                   "phyloseq", "flextable", "officer", "beepr")
 
-#Loading packages
-library(rBLAST, lib.loc = "C:/Temp/Rpackages") #Folder where this package is located
-packages_used <- c("devtools", "dplyr", "dada2", "ggplot2", 
-                   "gtools","grid","gridExtra", "kableExtra",
-                   "iNEXT", "vegan", "cowplot", "purrr",
-                   "tidyverse", "dada2", "ggResidpanel", "data.table",
-                   "plyr", "ggpubr", "decontam", "viridisLite",
-                   "phyloseq", "FSA", "lubridate",
-                   "ggrepel", "phyloseqCompanion", "ape", "car",
-                   "tidyr", "tidyselect", "nnet",
-                   "insight", "rBLAST", "taxonomizr","viridis",
-                   "indicspecies", "beepr","patchwork", "tibble",
-                   "tidylog","htmltools", "adegenet","gdm","MiscMetabar",
-                   "cowplot", "scales","pairwiseAdonis", "microbiome",
-                   "ggsci", "forcats", "dunn.test", "colorspace", "svglite", "ggvenn", "flextable", "officer", 
-                   "VennDiagram")
+suppressMessages(invisible(lapply(packages_used, library, character.only = TRUE)))
 
-suppressMessages(invisible(
-  lapply(packages_used, library, character.only = TRUE)
-  ))
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) message("All packages loaded correctly") else
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+rm(packages_used, missing_pkgs)
 
-if(all(packages_used %in% (.packages()))) {
-  print(message("All packages loaded correctly:"))
-  print(packages_used)
-  } else {
-  print(message("One or more packages did not load correctly."))
-  print(packages_used[-which(packages_used %in% (.packages()))])
-  }
-
-#Set plot themes
-theme_set(theme_minimal())
-
-rm(packages_used)
+theme_set(theme_bw())
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
-message(paste0(utf8::as_utf8("\U0001f600"), " All good!"))
+set_flextable_defaults(theme_fun = theme_vanilla, font.size = 10, bold_header = TRUE)
 
-# Function to save numeric sequential copies of graphs in a path
+fig_dir <- "figures/2.reads_filtering"
+tab_dir <- "outputs/2.reads_filtering"
+for (d in c(fig_dir, tab_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+```
 
-auto_filename <- function(base, ext) {
-  # Remove extension if accidentally included
-  base <- sub(paste0("\\.", ext, "$"), "", base)
-  full_path <- paste0(base, ".", ext)
-  
-  i <- 1
-  while (file.exists(full_path)) {
-    full_path <- paste0(base, "_", i, ".", ext)
-    i <- i + 1
-  }
-  return(full_path)
+## Settings
+
+```{r settings}
+input_file    <- "data/bcm_reefs_raja2023.rds"
+counts_file   <- "data/bcms_filtered_raja2023.rds"
+tss_file      <- "data/bcms_filtered&tss_reefs_raja2023.rds"
+stacked_file  <- "data/ASV_taxa_stacked_tss.csv"
+tss_table_file <- "data/ASV_taxa_table_tss.csv"
+
+min_reads      <- 10000   # mats with fewer reads are removed (Methods 2.4)
+min_count      <- 1       # an ASV is "present" in a mat with at least this many reads
+prev_threshold <- 0.10    # ASVs present in fewer than this proportion of mats are removed
+
+tax_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+```
+
+## Output helpers
+
+```{r output helpers}
+# Same helpers as in the other scripts
+save_fig <- function(plot, name, width = 11, height = 11) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), plot = plot,
+         device = cairo_pdf, width = width, height = height, units = "in")
 }
 
+save_tab <- function(table, name) {
+  doc <- read_docx() %>% body_add_flextable(autofit(flextable(table)))
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  write.csv(table, file.path(tab_dir, paste0(name, ".csv")), row.names = FALSE)
+}
+
+# Same definition of "unassigned" as in scripts 4, 6 and 7
+is_unassigned <- function(x) {
+  is.na(x) | x == "" |
+    grepl("unknown|unidentified|uncultured|unclassified|metagenome", x, ignore.case = TRUE)
+}
+
+# Mats, ASVs with reads, reads and reads per mat of a phyloseq object
+data_summary <- function(ps, step) {
+  tibble(Step = step,
+         Mats = nsamples(ps),
+         ASVs = sum(taxa_sums(ps) > 0),
+         Reads = sum(sample_sums(ps)),
+         `Mean reads per mat` = round(mean(sample_sums(ps))),
+         `Min reads per mat`  = min(sample_sums(ps)))
+}
+```
+
+#--------------------------
+
+# 1. Data
+
+```{r data}
+reefs_all <- readRDS(input_file)
+reefs_all <- prune_taxa(taxa_sums(reefs_all) > 0, reefs_all)   # ASVs only found in other samples
+steps <- data_summary(reefs_all, "Reef mats after decontamination")
+```
+
+# 2. Mats with few reads
+
+```{r low reads}
+reads_mat <- tibble(sample_id = sample_names(reefs_all),
+                    site      = as(sample_data(reefs_all), "data.frame")$site,
+                    Reads     = sample_sums(reefs_all)) %>%
+  mutate(Removed = Reads < min_reads)
+
+low_mats <- reads_mat %>% filter(Removed)
+low_mats   # mats removed
+
+reefs <- prune_samples(!sample_names(reefs_all) %in% low_mats$sample_id, reefs_all)
+reefs <- prune_taxa(taxa_sums(reefs) > 0, reefs)
+steps <- bind_rows(steps, data_summary(reefs, paste0("Mats < ", format(min_reads, big.mark = ","), " reads removed")))
+```
+
+Figure S1: reads per mat before (A, removed mats in red) and after (B) removing mats with fewer than `r format(min_reads, big.mark = ",")` reads.
+
+```{r reads plot}
+p_reads_all <- ggplot(reads_mat, aes(x = reorder(sample_id, Reads), y = Reads, colour = Removed)) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = min_reads, linetype = 2) +
+  scale_colour_manual(values = c(`FALSE` = "black", `TRUE` = "#E64B35"),
+                      labels = c(`FALSE` = "Kept", `TRUE` = "Removed"), name = NULL) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = "Mats (ordered by number of reads)", y = "Reads", title = "A. Reads per mat") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        panel.grid = element_blank(), legend.position = "bottom")
+
+p_reads_kept <- ggplot(filter(reads_mat, !Removed), aes(x = Reads)) +
+  geom_histogram(bins = 15, fill = "grey60", colour = "white") +
+  scale_x_continuous(labels = scales::comma) +
+  labs(x = "Reads per mat", y = "Number of mats", title = "B. Mats retained") +
+  theme(panel.grid = element_blank())
+
+p_reads <- p_reads_all / p_reads_kept
+p_reads
+save_fig(p_reads, "F1_reads_per_mat", width = 9, height = 9)
+```
+
+# 3. Rare ASVs
+
+ASVs present (≥ `min_count` read) in fewer than `r 100 * prev_threshold`% of the mats are removed. This also removes ASVs found in a single mat.
+
+```{r prevalence filter}
+asv_mat <- as(otu_table(reefs), "matrix")
+if (!taxa_are_rows(reefs)) asv_mat <- t(asv_mat)
+
+prevalence <- rowMeans(asv_mat >= min_count)
+reefs_filtered <- prune_taxa(prevalence >= prev_threshold, reefs)
+message("ASVs kept: present in at least ", ceiling(prev_threshold * nsamples(reefs)), " of ", nsamples(reefs), " mats")
+
+steps <- bind_rows(steps, data_summary(reefs_filtered,
+                   paste0("ASVs in < ", 100 * prev_threshold, "% of mats removed")))
+steps   # numbers for Results 3.1
+save_tab(steps, "T1_reads_and_asvs")
+
+saveRDS(reefs_filtered, counts_file)
+```
+
+# 4. Taxonomy
+
+Number of different names per rank in the filtered data; "assigned" leaves out names such as uncultured or unknown.
+
+```{r taxonomy summary}
+tax_df <- as.data.frame(as(tax_table(reefs_filtered), "matrix"))
+
+tax_summary <- tibble(Rank = tax_ranks[-1]) %>%
+  rowwise() %>%
+  mutate(`Names (all)`      = n_distinct(na.omit(tax_df[[Rank]])),
+         `Names (assigned)` = n_distinct(tax_df[[Rank]][!is_unassigned(tax_df[[Rank]])]),
+         `ASVs assigned (%)` = round(100 * mean(!is_unassigned(tax_df[[Rank]])), 1)) %>%
+  ungroup()
+tax_summary
+save_tab(tax_summary, "T2_taxonomy_summary")
+```
+
+# 5. TSS normalisation
+
+Total Sum Scaling: reads of each ASV divided by the total reads of the mat (<https://www.nature.com/articles/s41522-020-00160-w>).
+
+```{r tss}
+reefs_tss <- transform_sample_counts(reefs_filtered, function(x) x / sum(x))
+stopifnot(all(abs(sample_sums(reefs_tss) - 1) < 1e-8))
+saveRDS(reefs_tss, tss_file)
+```
+
+# 6. Stacked table
+
+One row per ASV and mat, with the taxonomy and the metadata (used for the barplots and heatmap in script 4).
+
+```{r stacked table}
+env <- as(sample_data(reefs_tss), "data.frame") %>% filter(!is.na(site))
+
+tss_mat <- as(otu_table(reefs_tss), "matrix")
+if (!taxa_are_rows(reefs_tss)) tss_mat <- t(tss_mat)
+
+taxa_info_all <- data.frame(tss_mat, as(tax_table(reefs_tss), "matrix"), check.names = FALSE)
+taxa_info_all$OTU <- rownames(taxa_info_all)
+
+taxa_stacked <- taxa_info_all %>%
+  pivot_longer(cols = all_of(sample_names(reefs_tss)),
+               names_to = "sample_id", values_to = "relative_abundance") %>%
+  left_join(env, by = "sample_id") %>%
+  filter(!is.na(site)) %>%
+  as.data.frame()
+
+# Every mat must have every ASV
+stopifnot(all(table(taxa_stacked$sample_id) == ntaxa(reefs_tss)))
+
+write.csv(taxa_info_all, tss_table_file)
+write.csv(taxa_stacked, stacked_file)
 beep(2)
 ```
-
-
-#Graphical parameters ggplots
-
-Parameters, palettes, facets, and ordering factors for ggplots 
-
-```{r}
-#creating ordering factors for the plots according to the sites
-
-# By type site Reef DIN and lake Temperature
-order_sitetype <- c("MiosKon", "LumbaLumba", "SouthKri","Arborek","Yenbuba", "New Reef","SoridoBay","GracesWall")
-```
-
-# Introduction
-
-First we filter and normalize the date, then we will do exploratory heatmaps and boxplots of the communities at different taxonomic levels
-
-Load the Phyloseq object. The Phyloseq object doesn't let you just save its components as data.frames. So you need to use phyloseqCompanion for this. We can then create a stacked matrix of ASVs and metadata.
-
-# Phyloseq load
-
-Loading the phyloseq objects and filtering variables that we are not interested
-
-```{r stacked dataframes, echo=FALSE}
-phylo.reefs <- readRDS("data/bcm_reefs_raja2023.rds")
-```
-
-Note: For finished publisheable code, just upload final and filtered phyloseq
-
-# Sequencing reads histograms
-
-Checking sequenced reads and their distributions
-
-```{r plots decontam}
-# Histogram and scatterplot to check samples with < 10000 were removed
-
-#Histogram 
-hist_reads <- hist(colSums(phylo.reefs@otu_table), plot = FALSE) 
-
-# Convert histogram data to a data frame for ggplot
-hist_data <- data.frame(
-  reads = hist_reads$mids,
-  frequency = hist_reads$counts
-)
-plot_hist <- ggplot(hist_data, aes(x = reads, y = frequency)) +
-  geom_bar(stat = "identity", fill = "grey") +
-  labs(x = "Reads", y = "Frequency", title = "A. Distribution of reads") +
-  theme_minimal()
-plot_hist
-
-# Scatterplot of reads x sample
-
-reads <- colSums(phylo.reefs@otu_table) %>% 
-  as.data.frame() %>% 
-  rename("Reads"= ".") %>% 
-  rownames_to_column(var="Sample")
-
-plot_scatt <- ggplot(reads, aes(x = Sample, y = Reads)) +
-  geom_point() +
-  labs(x = "Samples", y = "Reads", title = "B. Reads per sample") +
-  geom_hline(aes(yintercept=10000, color="10,000 reads"), size = 1)+
-  theme(axis.text.x = element_blank())+
-  scale_color_manual(name = "Threshold", values = c("10,000 reads" = "#4DBBD5FF"))+
-  scale_x_discrete(labels =NULL) + 
-  theme_minimal()
-plot_scatt
-
-combined <- (plot_hist / plot_scatt) +
-  plot_annotation(title = "Reads")
-combined
-
-# Save the plot as an SVG
-ggsave("figures/1.quality_filtering/7_reads_decontaminated_bcms.svg", 
-       plot = combined, 
-       device = "svg",
-       width = 11,
-       height = 11, 
-       dpi = 300)
-
-total_reads <- sum(phylo.reefs@otu_table)
-total_reads #1878770
-```
-
-How many reads we have after filtering and decontamination? - `r total_reads` reads. 
-
-# ASVs filtering
-
-**Data filtering**: Performing a low-count filter with ASVs having only appear 1 time (count), and 10% prevalence across samples.\ 
-
-Note: This will filtering very rare taxa
-
-```{r}
-#Define filtering criteria
-min_count <- 1
-prev_threshold <- 0.10
-
-#Get ASV/OTU table and sample count
-
-asv_table <- otu_table(phylo.reefs) %>% 
-  as.data.frame()
-sample_count <- nsamples(phylo.reefs)
-
-# Compute prevalence (proportion of samples where each ASV/OTU meets min_count)
-prev_filter <- apply(asv_table, 1, function(x) sum(x >= min_count) / sample_count)
-
-# Keep taxa that meet the prevalence threshold
-phylo.reefs_filtered <- prune_taxa(prev_filter >= prev_threshold, phylo.reefs)
-
-remove(min_count)
-remove(prev_threshold)
-
-#Save filtered phyloseq object for other markdowns and analysis (e.g., gllvm)
-saveRDS(phylo.reefs_filtered, "data/bcms_filtered_raja2023.rds")
-```
-
-# Taxonomy table
-
-```{r}
-#taxonomy table
-tax_table <- as.data.frame(phylo.reefs_filtered@tax_table) %>% 
-  rownames_to_column(var = "ASV") %>% 
-  mutate(Kingdom = as.factor(Kingdom), Phylum = as.factor(Phylum),
-         Class = as.factor(Class), Order = as.factor(Order),
-         Family = as.factor(Family), Genus = as.factor(Genus), 
-         Species = as.factor(Species))
-
-#ASV table
-asv_table <- as.data.frame(phylo.reefs_filtered@otu_table) %>% 
-  rownames_to_column(var = "ASV")
-
-#combine taxonomy and OTU tables by ASV
-reef.combined <- right_join(tax_table, otu_table, by = "ASV")
-```
-
-# ASVs distribution 
-
-How many ASVs per taxonomic level? Reefs and lakes
-
-```{r}
-nlevels(tax_table$Phylum) #30
-nlevels(tax_table$Class) #55
-nlevels(tax_table$Order) #123
-nlevels(tax_table$Family) #155
-nlevels(tax_table$Genus) #285
-nlevels(tax_table$Species) #44
-
-#Total ASVs
-nrow(tax_table)
-#2488
-```
-
-# TSS scaling
-
-Performing a Total Sum Scaling (TSS) 
-
-More info: https://www.nature.com/articles/s41522-020-00160-w
-
-
-```{r}
-tss_transform <- function(physeq_obj) {
-  otu_table(physeq_obj) <- transform_sample_counts(physeq_obj, function(x) x / sum(x))
-  return(physeq_obj)
-}
-
-phylo_tss <- tss_transform(phylo.reefs_filtered)
-saveRDS(phylo_tss, "data/bcms_filtered&tss_reefs_raja2023.rds")
-```
-
-# Stacked dataframe
-
-For further heatmap, boxplots, and PERMANOVA analysis we prepared a stacked dataframe (taxa_stacked)
-
-Note: TAXA_INFO = ASV_TABLE
-
-## Stacked all
-```{r}
-# Extract ASV table: from TSS phyloseq
-
-asv_table_tss <- as.data.frame(phylo_tss@otu_table)
-
-env <- sample.data.frame(phylo_tss@sam_data) %>% 
-  filter_at(vars(site), all_vars(!is.na(.)))
-
-# Pivot table into a stacked dataframe:
-taxa_info_all <- cbind(asv_table_tss, phylo_tss@tax_table) %>% as.data.frame()
-taxa_info_all$OTU <- rownames(taxa_info_all)
-taxa_stacked <- pivot_longer(taxa_info_all, cols = phylo_tss@sam_data$sample_id,
-                             values_to = "relative_abundance",
-                             names_to = "sample_id") %>% as.data.frame()
-
-if(any(table(taxa_stacked$sample_id) != nrow(phylo_tss@otu_table))) {
-  message("STOP! Something went wrong stacking, not all sequences present for
-          at least one of the samples")
-}
-
-# Adding meta-data to the stacked table
-colnames(taxa_stacked)[9] <- "sample_id" #in this matrix was as Sample instead of sample_id
-
-taxa_stacked <- left_join(taxa_stacked, env, by = "sample_id") %>% 
-  filter_at(vars(site),all_vars(!is.na(.)))
-
-gc()
-write.csv(taxa_info_all, file="data/ASV_taxa_table_tss.csv")
-write.csv(taxa_stacked, file="data/ASV_taxa_stacked_tss.csv")
-
-```
-
-#-----------------------------
-
-# Taxa proportions
-
-By phylum
-```{r}
-#Sum abundance per Phylum
-phylum_totals <- taxa_stacked %>%
-  group_by(Phylum) %>%
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE))
-
-# Add percentage
-phylum_totals <- phylum_totals %>%
-  mutate(percentage = 100 * total_abundance / sum(total_abundance))
-
-# Sort by most abundant
-phylum_totals <- phylum_totals %>%
-  arrange(desc(percentage))
-phylum_totals
-```
-
-By Genus
-```{r}
-#Sum abundance per Phylum
-phylum_totals <- taxa_stacked %>%
-  group_by(Phylum) %>%
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE))
-
-# Add percentage
-phylum_totals <- phylum_totals %>%
-  mutate(percentage = 100 * total_abundance / sum(total_abundance))
-
-# Sort by most abundant
-phylum_totals <- phylum_totals %>%
-  arrange(desc(percentage))
-phylum_totals
-```
-
-## Top 10 Phyla barplot
-
-Prepare dataframe
-```{r}
-#Get top 10 most abundant phyla (overall)
-top_phyla <- taxa_stacked %>%
-  group_by(Phylum) %>%
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE)) %>%
-  arrange(desc(total_abundance)) %>%
-  slice_head(n = 10) %>%
-  pull(Phylum)
-
-#Collapse other phyla into "Other Phyla"
-taxa_stacked_mod <- taxa_stacked %>%
-  mutate(Phylum = ifelse(Phylum %in% top_phyla, Phylum, "Other Phyla"))
-
-#Calculate percentage abundance per site_type and phylum
-phylum_percentages <- taxa_stacked_mod %>%
-  group_by(site_type, site, Phylum) %>%  #adjust categories you want to estimate percentages on
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
-  group_by(site) %>% #adjust to your target grouping visualization
-  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
-  ungroup()
-
-#Determine stacking order by total abundance (ascending so most abundant is bottom)
-phylum_order <- c(
-  "Cyanobacteriota",
-  "Proteobacteria",
-  "Bacteroidota",
-  "Planctomycetota",
-  "Crenarchaeota",
-  "Verrucomicrobiota",
-  "Actinobacteriota",
-  "Acidobacteriota",
-  "Fusobacteriota",
-  "Desulfobacterota",
-  "Myxococcota",
-  "Other Phyla"
-)
-
-#Set factor levels for Phylum to control stacking order
-phylum_percentages$Phylum <- factor(phylum_percentages$Phylum, levels = phylum_order)
-
-# Define colors for "Other Phyla"
-all_colors <- phylum_colors2
-all_colors["Other Phyla"] <- "grey70"
-
-#Order sites
-phylum_percentages$site <- factor(phylum_percentages$site,                                           
-                       levels = order_sitetype)
-
-```
-
-Plot
-```{r}
-#Plot stacked barplot
-phyla_stack_plot <- 
-  ggplot(phylum_percentages, aes(x = site, y = percentage, fill = Phylum)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = all_colors) +
-  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
-  labs(
-    title = "Top 10 Abundant Phyla by Site Type",
-    x = "Site Type",
-    y = "Relative Abundance (%)"
-  ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  facet_wrap(~site_type, scales = "free_x", labeller = labeller(site_type = facet_labels))
-phyla_stack_plot
-```
-
-Save plot
-
-```{r}
-safe_filename <- auto_filename("figures/barplots/stacked_top10_phyla", "svg")  #adjust path and output file name
-ggsave("figures/barplots/stacked_top10_phyla.svg", 
-       plot = phyla_stack_plot, 
-       device = "svg",
-       width = 11,
-       height = 11, 
-       dpi = 300)
-```
-
-Extra: calculating overall per site_type only (not including site difference) 
-For supplement descriptions purposes
-
-```{r}
-phylum_percentages_sitetype <- taxa_stacked_mod %>%
-  group_by(site_type, Phylum) %>%  #adjust categories you want to estimate percentages on
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
-  group_by(site_type) %>% #adjust to your target grouping visualization
-  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
-  ungroup()
-
-site_type_export <- phylum_percentages_sitetype %>%
-  select(site_type, Phylum, percentage) %>% 
-  pivot_wider(names_from = site_type, values_from = percentage) %>% 
-  arrange(desc(reef))
-```
-
-## Only Cyanos Order barplot
-
-Prepare dataframe
-```{r}
-# extract Orders in Cyanobacteria Phylum
-cyanos <- taxa_stacked %>% 
-  filter(., Phylum == "Cyanobacteriota") %>% 
-  group_by(Order)
-  
-#Calculate percentage abundance per site_type and order
-order_percentages <- cyanos %>%
-  group_by(site_type, site, Order) %>%  #adjust categories you want to estimate percentages on
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
-  group_by(site) %>% #adjust to your target grouping visualization
-  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
-  ungroup()
-
-```
-
-Plot
-```{r}
-#Plot stacked barplot
-phyla_stack_plot <- 
-  ggplot(order_percentages, aes(x = site, y = percentage, fill = Order)) +
-  geom_bar(stat = "identity") +
-  scale_fill_npg(na.value = "gray") +  # <-- specify NA color here
-  labs(
-    title = "Cyanobacteria Orders",
-    x = "Site Type",
-    y = "Relative Abundance (%)"
-  ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  facet_wrap(~site_type, scales = "free_x", labeller = labeller(site_type = facet_labels))
-phyla_stack_plot
-```
-
-
-##Top 10 Phyla x mat
-
-Prepare dataframe
-```{r}
-#Calculate percentage abundance per SAMPLE_ID, site_type and phylum
-phylum_percentages <- taxa_stacked_mod %>%
-  group_by(site_type, site, sample_id, mat_color, direct_substrate, biotic_abiotic, Phylum) %>%  #adjust categories you want to include
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
-  group_by(sample_id) %>% #adjust to your target grouping visualization
-  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
-  ungroup()
-
-#Set factor levels for Phylum to control stacking order
-phylum_percentages$Phylum <- factor(phylum_percentages$Phylum, levels = phylum_order)
-
-# Define colors for "Other Phyla"
-all_colors <- phylum_colors2
-all_colors["Other Phyla"] <- "grey70"
-
-#Order sites
-phylum_percentages$site <- factor(phylum_percentages$site,                                           
-                       levels = order_sitetype)
-
-#split lakes and reefs
-perc_lakes <- phylum_percentages %>% 
-  filter(site_type == "lake")
-
-perc_reefs <- phylum_percentages %>% 
-  filter(site_type == "reef")
-
-
-```
-
-Plot
-```{r}
-#Plot stacked barplot
-phyla_reef_plot <- 
-  ggplot(perc_reefs, aes(x = sample_id, y = percentage, fill = Phylum)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = all_colors) +
-  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
-  labs(
-    title = "Top 10 Abundant Phyla by Site Type",
-    x = "",
-    y = "Relative Abundance (%)"
-  ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  facet_wrap(~ site, scales = "free_x", nrow = 2, ncol = 4,
-             labeller = labeller(site = facet_labels))
-phyla_reef_plot
-
-phyla_lake_plot <- 
- ggplot(perc_lakes, aes(x = sample_id, y = percentage, fill = Phylum)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = all_colors) +
-  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
-  labs(
-    x = "",
-    y = "Relative Abundance (%)"
-  ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  facet_wrap(~ site, scales = "free_x", nrow = 2, ncol = 4,
-             labeller = labeller(site = facet_labels))
-phyla_lake_plot
-
-fp <- phyla_reef_plot /phyla_lake_plot
-fp
-```
-
-Save plots
-
-```{r}
-ggsave("figures/barplots/stacked_top10_mat_phyla3.svg", 
-       plot = fp, 
-       device = "svg",
-       width = 11,
-       height = 11, 
-       dpi = 300)
-
-```
-
-##Top 25 Genus
-
-For results and supplements descriptions
-```{r}
-#Get top 10 most abundant genus (overall)
-top_genus <- taxa_stacked %>%
-  group_by(Genus) %>%
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE)) %>%
-  arrange(desc(total_abundance)) %>%
-  slice_head(n = 50) %>%
-  pull(Genus)
-
-#Collapse other genus into "Other genus"
-taxa_stacked_mod <- taxa_stacked %>%
-  mutate(Genus = ifelse(Genus %in% top_genus, Genus, "Other genus"))
-
-#Calculate percentage abundance per site_type and Genus
-Genus_percentages <- taxa_stacked_mod %>%
-  group_by(site_type, site, Genus, Phylum) %>%  #adjust categories you want to estimate percentages on
-  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
-  group_by(site) %>% #adjust to your target grouping visualization
-  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
-  ungroup()
-
-
-```
-
-# Heatmap 
-
-Adjust the taxonomic value you want to plot
-
-```{r Top 50}
-fill = "Phylum"
-taxa = "Genus"
-topN = 50
-all = FALSE
-unidentified = FALSE
-```
-
-## Temporary df
-
-```{r temporary dataframe}
-# Setting up the temporary dataframe:
-toplot <- taxa_stacked 
-colnumber <- which(colnames(toplot) == fill)
-colnumber2 <- which(colnames(toplot) == taxa)
-colnames(toplot)[colnumber] <- "fill"
-colnames(toplot)[colnumber2] <- "taxa"
-
-# This replaces anything that has "Unknown" in the chosen fill and taxa groups with "Unidentified"
-toplot[which(is.na(toplot$taxa)), "taxa"] <- "Unidentified"
-toplot[which(grepl("Unknown", toplot$taxa)), "taxa"] <- "Unidentified"
-toplot[which(toplot$taxa == "Unidentified"), 
-       "fill"] <- paste0("Unidentified ", taxa)
-
-# Creates a table with the taxonomies present after filtering 
-taxonomic <- unique(toplot[, c("taxa", "fill")])
-taxonomic$taxa <- as.factor(taxonomic$taxa)
-taxonomic$fill <- as.factor(taxonomic$fill)
-
-# The columns that you want to use for plotting need to be in the groups here:
-toplot <- toplot %>%
-  group_by(sample_id, area, site, taxa, fill, site_type,benthic_dom,connection, temperature,chla, conductivity,salinity, mat_color,mat_thickness,direct_substrate, substrate_group, biotic_abiotic, neigh1, neigh2) %>%  
-   mutate(relative_abundance = as.numeric(relative_abundance)) %>% # Edit here from your metadata
-  dplyr::summarise(relative_abundance = sum(relative_abundance)) %>% 
-  ungroup() %>% 
-  as.data.frame()
-
-# Gets the MEAN COMMUNITY: 
-toplot <- toplot %>%
-  group_by(area, site, taxa, fill, site_type,benthic_dom,connection, temperature, conductivity,salinity, chla, mat_color,substrate_group) %>% 
-  dplyr::summarise(relative_abundance = mean(relative_abundance)) %>% 
-  ungroup() %>% 
-  as.data.frame()
-
-# Orders the taxa by top abundance:
-top <- toplot %>% 
-  dplyr::group_by(taxa) %>% 
-  dplyr::summarise(meanAbun = mean(relative_abundance)) %>% 
-  ungroup() %>% 
-  as.data.frame()
-
-# Top abundance of the "fill" group:
-top2 <- toplot %>%
-  group_by(area, site, fill, site_type,benthic_dom,connection, temperature, mat_color,
-           conductivity,salinity, chla, substrate_group) %>% 
-  dplyr::summarise(relative_abundance = sum(relative_abundance)) %>% 
-  ungroup() %>% 
-  as.data.frame()
-top2 <- top2 %>% 
-  group_by(fill) %>% 
-  dplyr::summarise(meanAbun = mean(relative_abundance)) %>% 
-  ungroup() %>% 
-  as.data.frame()
-
-toplot <- toplot[,-which(colnames(toplot) == "fill")]
-
-if(all){topN = length(unique(toplot$taxa))}
-
-top2 <- top2[order(top2$meanAbun, decreasing = TRUE), ]
-top <- top[order(top$meanAbun, decreasing = TRUE), ]
-selected <- top$taxa[1:topN]
-toplot <- toplot %>% filter(taxa %in% selected)
-
-taxonomic <- taxonomic[which(taxonomic[, "taxa"] %in% selected), ]
-
-taxonomic <- left_join(taxonomic, top, by = "taxa")
-colnames(taxonomic)[3] <- "taxaMeanAbun"
-taxonomic <- left_join(taxonomic, top2, by = "fill")
-colnames(taxonomic)[4] <- "fillMeanAbun"
-taxonomic <- taxonomic[order(taxonomic$fillMeanAbun),]
-
-toplot <- left_join(toplot, taxonomic, by = "taxa")
-
-toplot[, "taxa"] <- factor(toplot[, "taxa"],
-                           levels = taxonomic[, "taxa"])
-
-multi.mixedorder <- function(..., na.last = TRUE, decreasing = TRUE){
-  do.call(order, c(
-    lapply(list(...), function(l){
-      if(is.character(l)){
-        factor(l, levels=gtools::mixedsort(unique(l)))
-      } else {
-        factor(as.character(l), levels=gtools::mixedsort(levels(l)))
-      }
-    }),
-    list(na.last = na.last, decreasing = decreasing)
-  ))
-}
-
-colnames(toplot)[which(colnames(toplot) == taxa)] <- "taxa"
-colnames(toplot)[which(colnames(toplot) == fill)] <- "fill"
-
-toplot$fill <- factor(toplot$fill, levels = rev(unique(taxonomic$fill)))
-
-```
-
-## Heatmap plot
-
-Heatmap of the top 50 most abundant
-
-```{r heatmap plot, echo=FALSE}
-phylum_colors <- c(
-  "Cyanobacteriota"           = "#b02b25",
-  "Proteobacteria"            = "#185563",
-  "Bacteroidota"              = "#00A087", 
-  "Planctomycetota"           = "#3C5488",
-  "Verrucomicrobiota"         = "#F39B7F",
-  "Crenarchaeota"             = "#FFC857",
-  "Acidobacteriota"           = "#9071C1",
-  "Actinobacteriota"          = "#F26419",
-  "Fusobacteriota"            = "#7E6148",
-  "Unidentified"              = "darkgrey"
-)
-
-
-x <- 4  # nth root for alpha in heatmap
-
-toplot2 <- toplot %>% 
-  mutate(site = factor(site, levels = order_sitetype)) #order locations
-
-# Calculate max and dynamic breaks for the colors - calculates based on max relative abundance of dataset
-max_abundance <- max(toplot2$relative_abundance, na.rm = TRUE)
-alpha_breaks_raw <- max_abundance * c(0.05, 0.25, 0.50, 0.75, 1.00)
-alpha_breaks_trans <- alpha_breaks_raw^(1 / x)
-
-
-# heatmap 
-asv_heatmap <- ggplot(toplot2, aes(x = site, y = taxa)) + 
-  geom_tile(aes(alpha = (relative_abundance)^(1/x), fill = fill)) +
-  scale_fill_manual(values = phylum_colors) +
-  scale_alpha_continuous(
-    range = c(0, 1),
-    breaks = alpha_breaks_trans,
-    labels = scales::percent(alpha_breaks_raw, accuracy = 0.1)) +
-  labs(
-    x = "Sites (Mean Community)", 
-    y = "Top 50 Genera",
-    alpha = "Relative abundance (%)", 
-    fill = fill) +
-  theme(
-    legend.key = element_blank(),
-    axis.text.x = element_text(angle = 90),
-    axis.text.y = element_text(colour = "black", face = "bold.italic", size = 9), 
-    legend.text = element_text(size = 10, face = "bold", colour = "black"), 
-    legend.title = element_text(size = 11, face = "bold"),
-    panel.background = element_blank(), 
-    panel.border = element_rect(colour = "black", fill = NA, size = 1),
-    legend.position = "right",
-    panel.grid.major.y = element_line(colour = "grey95")) +
-  scale_y_discrete(limits = levels(toplot2$taxa))
-
-asv_heatmap
-```
-
-```{r}
-library(shadowtext)
-
-x <- 4  # nth root — keeps low-abundance cells visible when mapped to shading
-
-toplot2 <- toplot %>% 
-  mutate(
-    site = factor(site, levels = order_sitetype),
-    taxa = forcats::fct_relevel(taxa, "Unidentified", after = 0)  # Unidentified to bottom row
-  )
-
-max_abundance <- max(toplot2$relative_abundance, na.rm = TRUE)
-
-# breaks evenly spaced in TRANSFORMED space, then back-transformed to raw values
-# this keeps the legend labels from bunching up/overlapping
-trans_breaks <- seq(0, max_abundance^(1/x), length.out = 6)[-1]
-raw_breaks   <- trans_breaks^x
-
-# heatmap 
-asv_heatmap <- ggplot(toplot2, aes(x = site, y = taxa)) + 
-  geom_tile(aes(fill = relative_abundance^(1/x)), colour = "grey85", linewidth = 0.3) +
-  geom_shadowtext(aes(label = sprintf("%.2f", relative_abundance * 100)),
-                   colour = "black", bg.colour = "white", bg.r = 0.15,
-                   size = 2.3) +
-  scale_fill_gradientn(
-    colours = grDevices::colorRampPalette(c("white", "black"))(100),
-    breaks  = raw_breaks^(1/x),
-    labels  = sprintf("%.2f", raw_breaks * 100),
-    name    = "Relative abundance"
-  ) +
-  labs(
-    x = "Sites (Mean Community)", 
-    y = "Top 50 Genera") +
-  theme(
-    legend.key = element_blank(),
-    axis.text.x = element_text(angle = 90),
-    axis.text.y = element_text(colour = "black", face = "bold.italic", size = 9), 
-    legend.text = element_text(size = 9, face = "bold", colour = "black"), 
-    legend.title = element_text(size = 11, face = "bold"),
-    panel.background = element_blank(), 
-    panel.border = element_rect(colour = "black", fill = NA, size = 1),
-    legend.position = "right",
-    panel.grid.major.y = element_line(colour = "grey95")) +
-  guides(fill = guide_colorbar(barheight = 12, barwidth = 0.8)) +
-  scale_y_discrete(limits = levels(toplot2$taxa))
-
-asv_heatmap
-
-```
-
-
-
-Saving plots in directory. Make sure to change filenames accordingly
-
-```{r save heatmap}
-
-safe_filename <- auto_filename("figures/heatmaps/heatmap_top50_genus", "svg")  #adjust path and output file name
-ggsave("figures/heatmaps/heatmap_top50_genus.svg", 
-       plot = asv_heatmap, 
-       device = "svg",
-       width = 11,
-       height = 11, 
-       dpi = 300)
-```
-
-
-# Core Microbiome
-
-ASVs in core microbiome
-```{r}
-#ASVs in core microbiome
-
-core.all <- core_members(seq_ob_filtered, detection = 0, prevalence = 70/100, include.lowest = FALSE)
-core.all <- tax_table %>%
-    filter(ASV %in% core.all)
-
-
-core.lakes <- core_members(lakes, detection = 0, prevalence = 70/100, include.lowest = FALSE)
-core.lakes <- tax_table.lakes %>%
-    filter(ASV %in% core.lakes)
-
-
-core.reefs <- core_members(reefs, detection = 0, prevalence = 70/100, include.lowest = FALSE)
-core.reefs <- tax_table.reef %>%
-    filter(ASV %in% core.reefs)
-
-```
-
-## Venn diagram core
-```{r}
-core.all
-core.lakes
-core.reefs
-
-lakes_asvs <- core.lakes$ASV
-reefs_asvs <- core.reefs$ASV
-
-venn.core <- draw.pairwise.venn(
-  area1 = length(lakes_asvs),
-  area2 = length(reefs_asvs),
-  cross.area = length(intersect(lakes_asvs, reefs_asvs)),
-  category = c("lake", "reef"),
-  fill = c("#cd5a3a", "#4DBBD5"),
-  alpha = 0.5,
-  cex = 1.5,
-  cat.cex = 1.5,
-  cat.pos = c(-20, 20)
-)
-dev.off()
-```
-
-## Core prevalence
-
-```{r}
-#Need to transpose first
-asv_lakes_tss.t <- asv_lakes_tss %>% 
-  t() %>% 
-  as.data.frame()
-
-asv_reefs_tss.t <- asv_reefs_tss %>% 
-  t() %>% 
-  as.data.frame()
-
-# Calculate prevalence
-# For lakes
-prevalence_lakes <- asv_lakes_tss.t %>%
-  select(all_of(core.lakes$ASV)) %>%
-  summarise(across(everything(), ~ mean(. > 0))) %>% #gives the fraction of samples where the ASV is present
-  pivot_longer(cols = everything(), names_to = "ASV", values_to = "Prevalence") %>%
-  left_join(core.lakes, by = "ASV") %>%
-  mutate(Habitat = "lake")
-
-# For reefs
-prevalence_reefs <- asv_reefs_tss.t %>%
-  select(all_of(core.reefs$ASV)) %>%
-  summarise(across(everything(), ~ mean(. > 0))) %>%
-  pivot_longer(cols = everything(), names_to = "ASV", values_to = "Prevalence") %>%
-  left_join(core.reefs, by = "ASV") %>%
-  mutate(Habitat = "reef")
-
-# Combine both habitats
-core_prevalence <- bind_rows(prevalence_lakes, prevalence_reefs)
-```
-
-## Barplot prevalence
-
-```{r}
-core_prevalence2 <- core_prevalence %>%
-  # Replace NA with "Unknown"
-  mutate(
-    Phylum = ifelse(is.na(Phylum), "Unknown", Phylum),
-    Genus = ifelse(is.na(Genus), "Unknown", Genus),
-    Habitat = factor(Habitat, levels = c("lake", "reef"))
-  ) %>%
-  filter(Prevalence > 0) %>%
-  # Order Phylum according to phylum_colors.core
-  mutate(Phylum = factor(Phylum, levels = names(phylum_colors.core))) %>%
-  # Create helper column: reef prevalence per ASV
-  group_by(ASV) %>%
-  mutate(reef_prev = ifelse(Habitat == "reef", Prevalence, NA_real_)) %>%
-  ungroup() %>%
-  # Arrange by Phylum and reef prevalence
-  arrange(Phylum, desc(reef_prev)) %>%
-  # Create x-axis ordering variable for ASVs
-  mutate(order_var = factor(ASV, levels = unique(ASV)))
-
-```
-
-Plot
-```{r}
-core_prevalence.plot <-
-  ggplot(core_prevalence2, aes(x = order_var, y = Prevalence, fill = Phylum )) +
-  geom_col(position = position_dodge2(width = 0.8, preserve = "single")) +  
-  labs(x = "ASVs", y = "Prevalence") +
-  coord_cartesian(ylim = c(0.70, 1)) + 
-  scale_fill_manual(values = phylum_colors.core) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(
-      angle = 90, hjust = 1, vjust = 0.5, size = 8,
-      color = phylum_colors.core[as.character(core_prevalence.p$Phylum)]
-    ),
-    axis.title.x = element_text(size = 12),
-    axis.title.y = element_text(size = 12),
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 10),
-    legend.position = "bottom"
-  )
-
-core_prevalence.plot
-```
-
-Save
-```{r}
-ggsave("figures/core_microbiome/core_barplot_asv.svg", 
-       plot = core_prevalence.plot, 
-       device = "svg",
-       width = 14,
-       height = 8, 
-       dpi = 300)
-```
-
-
-#---
-
-Phyla and genus input data from microbiomeanalyst
-```{r}
-#cut taxa table
-tax_table2 <- tax_table %>% 
-  select(Phylum, Genus)
-#load core_phyla
-core_phyla <- read_csv("data/core_microbiome_phylum_90prevalence.csv") %>% 
-  mutate(Phylum = Feature)
-#load core_genus and merge with taxa
-core_genus <- read_csv("data/core_microbiome_genus_90prevalence.csv") %>% 
-  mutate(Genus = Feature)
-
-core_genus <- right_join(tax_table2, core_genus, by = "Genus") %>% 
-  select(Phylum, Genus, Prevalence, Group) 
-
-core_genus <- core_genus %>%
-  # For Phylum: replace NA with "Unknown" (new function)
-  mutate(Phylum = fct_na_value_to_level(Phylum, "Unknown")) %>%
-  # For Genus: replace "Not_Assigned" with "Unknown"
-  mutate(Genus = if_else(Genus == "Not_Assigned", "Unknown", Genus))
-```
-
-Extra core
-
-```{r}
-# Phyla
-# Ordering datafrme
-feature_order <- core_phyla %>%
-  group_by(Feature) %>%
-  summarise(mean_prev = mean(Prevalence)) %>%
-  arrange(-mean_prev) %>%
-  pull(Feature)
-  
-core_phyla$Feature <- factor(core_phyla$Feature, levels = feature_order)
-core_phyla_f <- core_phyla %>%
-  filter(Prevalence >= 0.10) #at least present 10% of samples set
-
-#plot
-core_phylum_plot <- 
-ggplot(core_phyla_f, aes(x = Feature, y = Prevalence, fill = Group)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = lake.reef_color) + 
-  labs(x = "Phyla", y = "Prevalence (%)", fill = NULL) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
-    strip.text = element_text(size = 12, face = "bold"),
-    axis.title = element_text(size = 12, face = "bold"), 
-    legend.position = "none") +
-  facet_wrap(~Group, ncol =1, 
-             labeller = labeller(Group = facet_labels))
-core_phylum_plot
-
-#Genus
-#Ordering dataframe
-feature_order <- core_genus %>%
-  group_by(Genus) %>%
-  summarise(mean_prev = mean(Prevalence)) %>%
-  arrange(-mean_prev) %>%
-  pull(Genus)
-
-core_genus$Genus <- factor(core_genus$Genus, levels = feature_order)
-core_genus_f <- core_genus %>%
-  filter(Prevalence >= 0.25)
-
-#Plot
-core_genus_plot <- 
-ggplot(core_genus_f, aes(x = Prevalence, y = Genus, fill = Group)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = lake.reef_color) + 
-  facet_wrap(~Group, dir = "v") +  # Show lake and reef side by side
-  labs(x = "Genus", y = "Prevalence (%)", fill = NULL) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
-    strip.text = element_text(size = 12, face = "bold"),
-    axis.title = element_text(size = 12, face = "bold"), 
-    legend.position = "none")
-core_genus_plot
-```
-
-```{r}
-phylum_colors <- c(
-  "Cyanobacteriota"   = "#cd5a3a",
-  "Proteobacteria"    = "#4DBBD5",
-  "Bacteroidota"      = "#00A087", 
-  "Planctomycetota"   = "#3C5488",
-  "Verrucomicrobiota" = "#F39B7F",
-  "Crenarchaeota"     = "#FFC857",
-  "Acidobacteriota"   = "#00bf80",
-  "Actinobacteriota"  = "#F26419",
-  "Fusobacteriota"    = "#7E6148",
-  "Desulfobacterota"  = "#1B065E", 
-  "Myxococcota"       = "#8491B4",
-  "Nitrospirota"      = "#808080",
-  "Unknown"           = "#000000"
-)
-
-
-core_genus_f2 <- core_genus_f %>% 
-  mutate(
-    Phylum = factor(Phylum, levels = names(phylum_colors))
-  ) %>%
-  arrange(Phylum, Prevalence) %>%
-  mutate(Genus = factor(Genus, levels = rev(unique(Genus)))) %>% 
-  mutate(Phylum = fct_na_value_to_level(Phylum, "Unknown"))
-
-
-
-ggplot(core_genus_f2, aes(x = Prevalence, y = Genus, fill = Phylum)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = phylum_colors) + 
-  facet_wrap(~Group, dir = "v") +  # Show lake and reef side by side
-  labs(x = "Prevalence (%)", y = "Genus", fill = "Phylum") +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
-    strip.text = element_text(size = 12, face = "bold"),
-    axis.title = element_text(size = 12, face = "bold"), 
-    legend.position = "right"
-  )
-```
-
-
-
-Save plots
-```{r}
-ggsave("figures/barplots/core_microbiome_phylum.svg", 
-       plot = core_phylum_plot, 
-       device = "svg",
-       width = 11,
-       height = 11, 
-       dpi = 300)
-```
-
-# Venn diagram 
-
-Overlapping ASVs between lakes and reefs. This is adding ALL samples presence/absence. This doesn't mean that these shared species are always present (not same as core microbiome)
-
-```{r}
-reef_asvs <- taxa_names(prune_taxa(taxa_sums(reefs) > 0, reefs))
-lake_asvs <- taxa_names(prune_taxa(taxa_sums(lakes) > 0, lakes))
-
-venn_asvs <- 
-  ggvenn(
-  list(Reef = reef_asvs, Lake = lake_asvs),
-  fill_color = c("#4DBBD5", "#cd5a3a"),
-  stroke_size = 0.5,
-  set_name_size = 4
-)
-venn_asvs
-
-
-
-
-```
-
-
-#------------------
-
-
-# Stats
-
-## Community matrix
-
-In order to use the package vegan and ggplot, we previously prepared the matrix "taxa_stacked" from the TSS transformation, and is now in long format. We need to set is as wide format, and with ASVs in columns in order to generate the community matrix for ordinations and permanova.
-
-We generate one dataframe by ASV (OTU) and one by Phylum.
-
-```{r}
-
-#Data matrix based on ASV (OTU)
-target <- "OTU"
-columns <- c(unique(taxa_stacked$sample_id), target)
-columns
-
-# Filter taxa_info and remove rows with all zeros
-community.asv <- taxa_info_all[, columns] %>%  #Selecting ASVs
-  filter(rowSums(.[, -which(colnames(.) == target)]) != 0)
-
-# Transpose and convert to data frame
-community.asv <- t(community.asv[, -which(colnames(community.asv) == target)]) %>%
-  as.data.frame()
-community.matx <- as.matrix(community.asv) #convert to also have a matrix object to run ordinations
-community.matx<- community.matx + 1e-6 #add pseudo count
-
-#Final aggregated dataframe with sample ID
-com.agg.asv <- community.asv
-com.agg.asv$sample_id <- rownames(community.asv)
-
-```
-
-## Environmental matrix
-
-If needed to load again...
-Environmental correlations done in script 3.morphotype_analysis 
-Here we load the final env matrix
-
-## PERMANOVA
-
-```{r}
-permanova_sitetype <- adonis2(community.matx ~ site_type, data = env, method = "bray")
-permanova_sitetype
-
-#save as table
-permanova_sitetypedf  <- as.data.frame(permanova_sitetype) %>% 
-  rownames_to_column(., var = "Source")
-permanova_sitetypeflex <- flextable(permanova_sitetypedf)
-permanova_sitetypeflex
-
-
-# Create Word document and add flextable
-doc <- read_docx() %>%
-  body_add_flextable(value = permanova_sitetypeflex)
-
-# Save
-print(doc, target = "outputs/stats/permanova_sitetype.docx")
-```
-
-```{r}
-permanova.site <- adonis2(community.matx ~ site,
-                  data = env,
-                  permutations = 9999,
-                  method = "bray", na.action = na.omit)
-permanova.site
-
-permanova.environment <- adonis2(community.matx ~ DIN * chla * temperature * mean.PO4,
-                  data = env,
-                  permutations = 9999,
-                  method = "bray",
-                  by = "margin", 
-                  na.action = na.omit)
-permanova.environment
-```
-
-
-
-##--------------
-## nMDS variables
-
-Saving variables to plot
-
-scores(asv.nmds,display = "sites") #check scores/coordinates according to site and see if there are some data points where the range doesn't correspond with the rest.
-
-```{r}
-#Save the scores and merging with samples classifiers and variables
-NMDS = data.frame(MDS1 = asv.nmds$points[,1], MDS2 = asv.nmds$points[,2])
-NMDS$sample_id <- rownames(NMDS)
-NMDS <- left_join(NMDS, env, by = "sample_id")
-
-#Save scores of envfits
-en_coord_cont <- as.data.frame(scores(envfit.asv, "vectors")) %>% 
-  rownames_to_column(., var = "env.variables")
-phy_coord_cont <- as.data.frame(scores(envfit.phyla, "vectors"))
-
-# Save the ordiellipse function as an object
-ordiplot(asv.nmds, type="point") #plot with ellipses
-ordiellipse(asv.nmds, env$site, display = "sites", kind = "sd", conf = 0.95, label = T)
-ord <- ordiellipse(asv.nmds, env$site, display = "sites", kind = "sd", conf = 0.95, label = T)
-
-# Extract ordiellipse coordinates
-df_ell <- data.frame()
-for(g in levels(as.factor(NMDS$site))){
-  df_ell <- rbind(df_ell, cbind(as.data.frame(with(NMDS[NMDS$site==g,],
-                  vegan:::veganCovEllipse(cov = ord[[g]]$cov,
-                                  center = ord[[g]]$center,
-                                  scale = ord[[g]]$scale))), site=g))
-}
-
-#Save centroids and merge with NMDS dataframe
-centroids <- aggregate(cbind(MDS1, MDS2) ~ site, data = NMDS, FUN = mean)
-NMDS <- merge(NMDS, setNames(centroids, c('site','oNMDS1','oNMDS2')),
-              by = 'site', sort = FALSE)
-
-# Save each species score
-species.scores <- as.data.frame(scores(asv.nmds, "species"))
-species.scores$species <- rownames(species.scores)
-```
-
-## nMDS + envfit ggplot
-
-Variables as factors for plotting. Adjust according to yours
-
-```{r nmds variables}
-plot.title <- "BCMs communities Raja Ampat - Level: ASV"
-fill <- "Phylum"
-env.variables <- c("connection", "temperature", "chla", "salinity")
-# Define the variables you want to use for coloring
-color_vars <- c("benthic_dom", "site_type", "site","influence_temp","influence_chla", "mat_color", "substrate_group")
-```
-
-Next, plotting the nMDS with the envfit vectors for the environmental variables.
-
-The following is a loop where each plot is colored by different categories set in "color_vars". The plots are also saved in designated folder.
-
-In the following chunk only adjust the export folder
-
-```{r nmds ggplot loop}
-for (color_var in color_vars) {
-  
-  p <- ggplot() +
-    geom_point(data = NMDS, 
-               aes(x = MDS1, y = MDS2, color = .data[[color_var]],  # Use dynamic coloring
-                   shape = site_type),    # Ensure site_type exists in NMDS
-               alpha = 0.7, size = 2) +
-     geom_text(aes(label = sample_id), vjust = -0.5, hjust = 0.5, size = 5) +
-    
-    # Control point size
-    scale_size_continuous(limits = c(0.000001, 100), range = c(1, 10),
-                          breaks = c(1, 10), name = "ASV \nMean Relative \nAbundance (%)") +
-    
-    # Use a colorblind-friendly palette
-    scale_color_viridis_d(option = "H") +  # or use scale_color_brewer(palette = "Set2")
-    
-    # Customize shapes for the factors (optional)
-    scale_shape_manual(values = c(16, 17)) +  # Customize shapes as needed
-    
-    # Add labels and titles
-    labs(subtitle = paste0("stress=", round(asv.nmds$stress, digits = 4)),
-         title = paste0("NMDS Plot - Colored by ", color_var)) + 
-    
-    # Set theme options
-    theme_bw() +
-    theme(plot.subtitle = element_text(hjust = 1, face = "italic", size = 14),
-          plot.title = element_text(vjust = -6, size = 15, face = "bold"),
-          legend.position = "right",
-          legend.title = element_text(size = 14, face = "bold"),
-          legend.text = element_text(size = 12)) +
-    
-    # Add envfit vectors
-    geom_segment(data = en_coord_cont, 
-                 aes(x = 0, y = 0, xend = NMDS1 *1.5, yend = NMDS2*1.5), 
-                 arrow = arrow(length = unit(0.3, "cm")), color = "black") +
-    
-    # Add labels to envfit vectors
-    geom_text(data = en_coord_cont, 
-              aes(x = NMDS1, y = NMDS2, label = env.variables), 
-              color = "black", vjust = -0.5, hjust = 0.5)
-  
-  # Print the plots
-  print(p)
-  
-  # Save the plots as pdf / change only directory
-  ggsave(filename = paste0("figures/nmds/NMDS_plot_by_", color_var, ".pdf"), 
-         plot = p, 
-         device = cairo_pdf, width = 8, height = 6,
-         units = "in", scale = 1, fallback_resolution=300)
-  # Save the plots as png / change only directory
-  ggsave(filename = paste0("figures/nmds/NMDS_plot_by_", color_var, ".png"), 
-         plot = p, 
-         device = png, width = 8, height = 6,
-         units = "in", scale = 1, dpi=300)
-  
-} 
-
-```
-
-
-
-# PERMANOVA
-
-Analysis of variance using distance matrices. Here we test the community against the environmental variables
-
-Check this for complex models and how to write the formula: <https://uw.pressbooks.pub/appliedmultivariatestatistics/chapter/complex-models/>
-
-[![Formulas for models. See ?formula](images_rmd/interactions.png){.illustration}]
-
-```{r permanova and pairwise}
-#PERMANOVAs
-p.site <- adonis2(community_hell ~ site,
-                  data = env,
-                  permutations = 9999,
-                  method = "bray", na.action = na.omit)
-p.site
-
-p.environment <- adonis2(community_hell ~ temperature * chla * salinity,
-                  data = env,
-                  permutations = 9999,
-                  method = "bray", na.action = na.omit)
-p.environment
-
-p.categories <- adonis2(community_hell ~ mat_color + mat_substrate ,
-                  data = env,
-                  permutations = 9999,
-                  method = "bray", na.action = na.omit)
-p.categories
-
-#Save permanova results in excel file 
-p.sitedf <- as.data.frame(p.site)
-write.xlsx(p.sitedf, path = "outputs/stats/p.sitedf.xlsx")
-remove(p.sitedf)
-
-p.envdf <- as.data.frame(p.environment)
-write_xlsx(p.envdf, path = "outputs/stats/p.envdf.xlsx")
-remove(p.envdf)
-
-p.catdf <- as.data.frame(p.categories)
-write_xlsx(p.catdf, path = "outputs/stats/p.catdf.xlsx")
-remove(p.catdf)
-
-
-#Pairwise analysis of significant variables
-pw.site <- pairwise.adonis(community_hell, factors = env$site, 
-                           p.adjust.m = "bonferroni", sim.method = "bray",
-                           permutations = 9999)
-pw.sitedf <- as.data.frame(pw.sitedf)
-write_xlsx(pw.sitedf, path = "outputs/stats/pw.sitedf.xlsx")
-remove(pw.sitedf)
-
-
-```
-
-# Indicator Species Analysis
-
-To identify which species (ASVs) are indicators of specific groups. Here we test it according to site, influence, color.
-
-Read more: <https://cran.r-project.org/web/packages/indicspecies/vignettes/IndicatorSpeciesAnalysis.html#data-required-for-indicator-species-analysis>
-
-<https://jkzorz.github.io/2019/07/02/Indicator-species-analysis.html>
-
-```{r function-IndVval.g}
-
-## Using function IndVal.g
-ind.origin.indvalg <-multipatt(community_hell, env$site_type,
-                           func = "IndVal.g", control = how(nperm=9999))
-
-ind.origin.indvalgdf <- as.data.frame(ind.origin.indvalg$sign)
-
-# Extract significant species
-ind.origin.indvalgdf <- ind.origin.indvalg$sign %>%
-  filter(p.value < 0.05)
-
-# Create a dataframe for ggplot
-ind.origin.indvalgdf$species <- rownames(ind.origin.indvalgdf) %>% 
-  rename(.,OTU = X) %>% 
-  select(-species) %>% 
-   mutate(mat_origin = case_when(
-    index == 1 ~ "bcm",
-    index == 2 ~ "sed"))
-
-# include taxonomy: comes from the taxa_info object
-colnames(taxa_info)
-taxa <- taxa_info[187:194]
-colnames(taxa)
-
-# Merge species indicator test with taxa
-
-ind.origin.indvalgdf <- left_join(ind.origin.indvalgdf, taxa, by = "OTU")
-
-#To save and not run the analysis again
-write.csv(ind.origin.indvalgdf, file="outputs/indicatorsp_sitetype_bcm.csv")
-
-```
-

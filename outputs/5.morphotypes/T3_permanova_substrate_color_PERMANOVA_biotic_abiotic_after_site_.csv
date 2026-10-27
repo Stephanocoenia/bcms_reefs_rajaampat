@@ -1,0 +1,5 @@
+"Source","Df","SumOfSqs","R2","F","Pr(>F)"
+"site",6,3.1922,0.3433,2.1339,1e-04
+"biotic_abiotic",2,0.4273,0.046,0.8569,0.7455
+"Residual",22,5.4852,0.59,NA,NA
+"Total",30,9.2976,1,NA,NA

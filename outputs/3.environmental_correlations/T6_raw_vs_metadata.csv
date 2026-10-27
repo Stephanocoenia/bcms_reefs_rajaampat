@@ -1,0 +1,57 @@
+"site","variable","raw_mean","metadata","rel_diff","differs","n"
+"Arborek","chla",1.189,1.189,0,FALSE,177
+"Arborek","salinity",34.069,34.069,0,FALSE,177
+"Arborek","temperature",29.881,29.881,0,FALSE,177
+"GracesWall","chla",2.7,2.7,0,FALSE,80
+"GracesWall","salinity",34.605,34.605,0,FALSE,80
+"GracesWall","temperature",29.235,29.235,0,FALSE,80
+"LumbaLumba","chla",3.044,3.044,0,FALSE,947
+"LumbaLumba","salinity",34.539,34.539,0,FALSE,947
+"LumbaLumba","temperature",29.899,29.899,0,FALSE,947
+"MiosKon","chla",1.452,1.452,0,FALSE,26
+"MiosKon","salinity",34.376,34.376,0,FALSE,26
+"MiosKon","temperature",30.037,30.037,0,FALSE,26
+"New Reef","chla",0.839,0.839,0,FALSE,40
+"New Reef","salinity",34.48,34.48,0,FALSE,40
+"New Reef","temperature",29.576,29.576,0,FALSE,40
+"SoridoBay","chla",2.709,2.709,0,FALSE,289
+"SoridoBay","salinity",34.649,34.649,0,FALSE,289
+"SoridoBay","temperature",29.39,29.39,0,FALSE,289
+"SouthKri","chla",2.009,2.009,0,FALSE,325
+"SouthKri","salinity",34.522,34.522,0,FALSE,325
+"SouthKri","temperature",30.515,30.515,0,FALSE,325
+"Yenbuba","chla",0.4,0.4,0,FALSE,4
+"Yenbuba","salinity",34.209,34.209,0,FALSE,4
+"Yenbuba","temperature",30.267,30.267,0,FALSE,4
+"Arborek","DIN",23.774,23.773,0,FALSE,6
+"Arborek","NH4",21.929,21.928,0,FALSE,6
+"Arborek","NO3NO2",1.845,1.844,0,FALSE,6
+"Arborek","PO4",0.131,0.131,0,FALSE,6
+"GracesWall","DIN",12.129,6.203,0.955,TRUE,4
+"GracesWall","NH4",10.575,4.793,1.206,TRUE,4
+"GracesWall","NO3NO2",1.554,1.555,0.001,FALSE,4
+"GracesWall","PO4",0.142,0.142,0,FALSE,4
+"LumbaLumba","DIN",1.734,1.732,0.001,FALSE,4
+"LumbaLumba","NH4",0.694,0.693,0.002,FALSE,4
+"LumbaLumba","NO3NO2",1.04,1.04,0,FALSE,4
+"LumbaLumba","PO4",0.104,0.104,0,FALSE,4
+"MiosKon","DIN",5.982,5.984,0,FALSE,4
+"MiosKon","NH4",4.928,4.93,0,FALSE,4
+"MiosKon","NO3NO2",1.054,1.055,0.001,FALSE,4
+"MiosKon","PO4",0.129,0.129,0,FALSE,4
+"New Reef","DIN",17.276,4.264,3.051,TRUE,2
+"New Reef","NH4",15.899,3.25,3.892,TRUE,2
+"New Reef","NO3NO2",1.377,1.377,0,FALSE,2
+"New Reef","PO4",0.366,0.106,2.458,TRUE,2
+"SoridoBay","DIN",15.971,8.093,0.973,TRUE,4
+"SoridoBay","NH4",13.434,1.8,6.463,TRUE,4
+"SoridoBay","NO3NO2",2.538,2.54,0.001,FALSE,4
+"SoridoBay","PO4",0.189,0.189,0,FALSE,4
+"SouthKri","DIN",3.502,3.502,0,FALSE,4
+"SouthKri","NH4",1.429,1.43,0.001,FALSE,4
+"SouthKri","NO3NO2",2.074,2.072,0,FALSE,4
+"SouthKri","PO4",0.166,0.166,0,FALSE,4
+"Yenbuba","DIN",3.013,3.013,0,FALSE,4
+"Yenbuba","NH4",1.948,1.948,0,FALSE,4
+"Yenbuba","NO3NO2",1.065,1.065,0,FALSE,4
+"Yenbuba","PO4",0.105,0.104,0,FALSE,4

@@ -1,0 +1,6 @@
+"Source","Df","SumOfSqs","F","Pr(>F)"
+"DIN.scaled",1,0.6054,2.1551,0.01
+"PO4.scaled",1,0.6829,2.4309,0.008
+"temp.scaled",1,0.5119,1.8222,0.033
+"chla.scaled",1,0.2762,0.9831,0.435
+"Residual",40,11.2362,NA,NA

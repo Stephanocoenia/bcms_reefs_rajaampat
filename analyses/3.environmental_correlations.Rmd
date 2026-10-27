@@ -1,0 +1,303 @@
+---
+title: "3. Environmental variables of the reef sites: correlations and predictor selection"
+author: "Stephanie Martinez"
+date: "2025-09-03"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r root, include = FALSE}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
+
+# Aim
+
+Select the environmental predictors used in scripts 4 (dbRDA, Hill numbers), 6 (GLLVM) and 7 (FAPROTAX):
+
+1. Pairwise correlations among the measured variables (Figure S6).
+2. Removal of variables with |r| > `cor_cutoff` (caret `findCorrelation`).
+3. Variance inflation factors of the remaining variables; variables with VIF ≥ `vif_threshold` are removed (usdm `vifstep`).
+4. Checks of the site values in the metadata (DIN, coordinates, depth).
+5. Table 1: environmental variables per site.
+
+Reef mats only, after filtering (`data/bcms_filtered_raja2023.rds`, script 2). The environmental values were measured per site, so all mats of a site have the same values. Each script standardises the selected predictors itself, within the reef mats it uses.
+
+Outputs: `figures/3.environmental_correlations/F<n>_<name>.pdf` and `outputs/3.environmental_correlations/T<n>_<name>.docx` (+ `.csv`).
+
+# Setup
+
+```{r setup, echo=FALSE, warning=FALSE}
+packages_used <- c("dplyr", "tidyr", "tibble", "phyloseq", "corrplot", "caret", "usdm",
+                   "flextable", "officer", "beepr")
+
+suppressMessages(invisible(lapply(packages_used, library, character.only = TRUE)))
+
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) message("All packages loaded correctly") else
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+rm(packages_used, missing_pkgs)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+set_flextable_defaults(theme_fun = theme_vanilla, font.size = 10, bold_header = TRUE)
+
+fig_dir <- "figures/3.environmental_correlations"
+tab_dir <- "outputs/3.environmental_correlations"
+for (d in c(fig_dir, tab_dir)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Settings
+
+```{r settings}
+counts_file <- "data/bcms_filtered_raja2023.rds"   # reef mats after filtering (script 2)
+
+# Candidate predictors (column names in the metadata)
+env_candidates <- c("temperature", "salinity", "chla", "mean.PO4", "DIN")
+var_labels <- c(temperature = "Temperature", salinity = "Salinity", chla = "Chl-a",
+                mean.PO4 = "PO4", DIN = "DIN")
+
+cor_cutoff    <- 0.75   # remove one of each pair with |r| above this
+vif_threshold <- 5      # remove variables with VIF >= this
+
+# ---- Table 1 (section 5) ----
+# Metadata columns -> Table 1 columns and decimals
+table1_vars <- tribble(
+  ~variable, ~column,        ~label,                   ~digits,
+  "temperature", "temperature",  "Temperature (°C)",     1,
+  "salinity",    "salinity",     "Salinity (PSU)",       1,
+  "chla",        "chla",         "Chlorophyll-a (µg/L)", 1,
+  "PO4",         "mean.PO4",     "PO₄³⁻ (µmol/L)",       2,
+  "NO3NO2",      "mean.NO3.NO2", "NO₂⁻ + NO₃⁻ (µmol/L)", 1,
+  "NH4",         "mean.NH4",     "NH₄⁺ (µmol/L)",        1,
+  "DIN",         "DIN",          "DIN (µmol/L)",         1)
+din_tolerance <- 0.02   # DIN check: relative difference from NH4 + NO2 + NO3 that is flagged
+
+# Raw measurements for Table 1 (mean and range per site)
+nutrient_file <- "data/DIN_mtm_raw.csv"          # one row per water sample (NIOZ)
+ctd_file      <- "data/env_ctd_20232024.csv"     # one row per CTD reading
+ctd_depth     <- c(1, 5)                         # depth interval (m), as in Methods 2.5
+# Site names in the raw files -> site codes in the metadata
+raw_site_map  <- c("NewReef" = "New Reef")
+
+order_sitetype <- c("MiosKon", "LumbaLumba", "SouthKri", "Arborek",
+                    "Yenbuba", "New Reef", "SoridoBay", "GracesWall")
+site_labels <- c("MiosKon" = "MiosKon", "LumbaLumba" = "Lumba-Lumba", "SouthKri" = "SouthKri",
+                 "Arborek" = "Arborek", "Yenbuba" = "Yenbuba", "New Reef" = "New Reef",
+                 "SoridoBay" = "Sorido Bay", "GracesWall" = "Grace's Wall")
+
+# Correlation plot colours
+color_cor <- c("#7F3B08", "#B75B04", "#E68D25", "#FDC57E", "#FEEDD6",
+               "#E9EAF3", "#BEBADA", "#8B7FB4", "#582F8C", "#3B1559")
+```
+
+## Output helpers
+
+```{r output helpers}
+save_tab <- function(table, name) {
+  doc <- read_docx() %>% body_add_flextable(autofit(flextable(table)))
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  write.csv(table, file.path(tab_dir, paste0(name, ".csv")), row.names = FALSE)
+}
+
+# Draw a base-graphics plot on screen and save it as PDF
+save_base_fig <- function(name, draw, width = 8, height = 8) {
+  draw()
+  cairo_pdf(file.path(fig_dir, paste0(name, ".pdf")), width = width, height = height)
+  draw()
+  dev.off()
+  invisible()
+}
+```
+
+#--------------------------
+
+# 1. Data
+
+```{r data}
+reefs <- readRDS(counts_file)
+env <- as(sample_data(reefs), "data.frame") %>% filter(!is.na(site))
+stopifnot(all(env_candidates %in% colnames(env)), !anyNA(env[env_candidates]))
+message(nrow(env), " mats, ", n_distinct(env$site), " sites")
+
+env_scaled <- as.data.frame(scale(env[, env_candidates]))
+colnames(env_scaled) <- var_labels[colnames(env_scaled)]
+```
+
+# 2. Correlations
+
+```{r correlations}
+cor_matrix <- cor(env_scaled)
+cor_test   <- cor.mtest(env_scaled, conf.level = 0.95)
+
+save_base_fig("F1_correlations_environment", function()
+  corrplot(cor_matrix,
+           method = "circle", type = "lower", order = "alphabet",
+           p.mat = cor_test$p, sig.level = 0.05, insig = "p-value",
+           col = colorRampPalette(color_cor)(10),
+           tl.col = "black", tl.srt = 45, tl.cex = 0.9,
+           cl.pos = "b", cl.ratio = 0.2, addgrid.col = "grey",
+           mar = c(1, 1, 2, 1), diag = FALSE))
+
+cor_table <- as.data.frame(as.table(cor_matrix), stringsAsFactors = FALSE) %>%
+  setNames(c("Variable 1", "Variable 2", "r")) %>%
+  mutate(p = as.vector(cor_test$p)) %>%
+  filter(match(`Variable 1`, colnames(cor_matrix)) < match(`Variable 2`, colnames(cor_matrix))) %>%
+  mutate(r = round(r, 2), p = signif(p, 3))
+cor_table
+save_tab(cor_table, "T1_correlations_environment")
+```
+
+# 3. Predictor selection
+
+```{r predictor selection}
+# 1) Pairwise correlations above the cutoff
+remove_cor <- colnames(env_scaled)[findCorrelation(cor_matrix, cutoff = cor_cutoff)]
+message("Removed, |r| > ", cor_cutoff, ": ", if (length(remove_cor)) paste(remove_cor, collapse = ", ") else "none")
+env_kept <- env_scaled[, setdiff(colnames(env_scaled), remove_cor), drop = FALSE]
+
+# 2) Variance inflation factors
+vif_all  <- vif(env_kept)   # usdm
+vif_step <- vifstep(env_kept, th = vif_threshold)
+vif_step
+remove_vif <- vif_step@excluded
+message("Removed, VIF >= ", vif_threshold, ": ", if (length(remove_vif)) paste(remove_vif, collapse = ", ") else "none")
+
+predictors <- setdiff(colnames(env_kept), remove_vif)
+message("Predictors used in scripts 4, 6 and 7: ", paste(predictors, collapse = ", "))
+
+vif_table <- vif_all %>%
+  rename(`VIF (all variables)` = VIF) %>%
+  left_join(vif_step@results %>% rename(`VIF (selected)` = VIF), by = "Variables") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 2)),
+         Selected = Variables %in% predictors)
+vif_table
+save_tab(vif_table, "T2_vif")
+
+# Scripts 4, 6 and 7 use DIN, PO4, temperature and chl-a; warn if the selection is different
+if (!setequal(predictors, c("DIN", "PO4", "Temperature", "Chl-a")))
+  warning("The selected predictors differ from those used in scripts 4, 6 and 7: update those scripts")
+```
+
+# 4. Checks of the site values
+
+The environmental variables were measured per site, so every mat of a site should have the same values, and DIN should equal NH₄⁺ + NO₂⁻ + NO₃⁻.
+
+```{r site checks}
+# One value per site (also coordinates and depth)
+check_vars <- c(table1_vars$column, "mean.NO2", "mean.NO3", "depth", "lat", "lon")
+check_vars <- intersect(check_vars, colnames(env))
+n_values <- env %>%
+  group_by(site) %>%
+  summarise(across(all_of(check_vars), ~ n_distinct(.x, na.rm = TRUE)), .groups = "drop") %>%
+  pivot_longer(-site, names_to = "variable", values_to = "n_values") %>%
+  filter(n_values > 1)
+n_values   # variables with more than one value within a site
+
+# Mats whose coordinates or depth differ from the rest of their site
+mode_val <- function(x) names(sort(table(x), decreasing = TRUE))[1]
+odd_mats <- env %>%
+  group_by(site) %>%
+  mutate(lat_site = as.numeric(mode_val(lat)), lon_site = as.numeric(mode_val(lon)),
+         depth_site = mode_val(depth)) %>%
+  ungroup() %>%
+  filter(lat != lat_site | lon != lon_site | as.character(depth) != depth_site) %>%
+  select(sample_id, site, lat, lon, lat_site, lon_site, depth, depth_site)
+odd_mats
+message("Sampling depth per site (m): ",
+        paste(distinct(env, site, depth)$site, distinct(env, site, depth)$depth, sep = " = ", collapse = "; "))
+
+# DIN = NH4 + NO2 + NO3
+din_check <- env %>%
+  group_by(site) %>%
+  summarise(across(c(DIN, mean.NH4, mean.NO3.NO2), first), .groups = "drop") %>%
+  mutate(NH4_plus_NO3NO2 = mean.NH4 + mean.NO3.NO2,
+         rel_diff = abs(DIN - NH4_plus_NO3NO2) / NH4_plus_NO3NO2,
+         DIN_differs = rel_diff > din_tolerance) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+din_check
+if (any(din_check$DIN_differs))
+  warning("DIN differs from NH4 + NO2 + NO3 at: ", paste(din_check$site[din_check$DIN_differs], collapse = ", "),
+          ". These DIN values are used in scripts 3-7.")
+
+save_tab(din_check, "T4_check_DIN")
+save_tab(odd_mats,  "T5_check_coordinates_depth")
+```
+
+# 5. Table 1: environmental variables per site
+
+Each cell is "site value (min–max)":
+
+- Site value: the value in the metadata, i.e. the value used in all models. For nutrients these exclude some high NH₄⁺/DIN samples (IQR rule in din_exploratory.Rmd), so they can differ from the mean of all samples.
+- Range: min and max of all raw measurements of the site.
+  - Temperature, salinity and chl-a: all CTD readings between `ctd_depth` m.
+  - PO₄³⁻, NO₂⁻ + NO₃⁻, NH₄⁺: all water samples of the site (both replicates, all depths); DIN per sample = NH₄⁺ + NO₂⁻ + NO₃⁻.
+
+Sites are ordered by increasing DIN (metadata value). T6 lists where the metadata value differs from the mean of all raw samples.
+
+```{r table 1}
+fmt <- function(x, d) sprintf("%.*f", as.integer(d), x + 1e-9)   # halves round up
+fix_site <- function(x) { x <- trimws(x); ifelse(x %in% names(raw_site_map), raw_site_map[x], x) }
+reef_sites <- unique(env$site)
+
+# Nutrients: one row per water sample
+nut <- read.csv(nutrient_file, check.names = FALSE) %>%
+  mutate(site = fix_site(site)) %>%
+  filter(site %in% reef_sites) %>%
+  transmute(site, depth, replicate, PO4, NO3NO2 = `NO3.NO2`, NH4, DIN = NH4 + `NO3.NO2`)
+
+# CTD: all readings between ctd_depth[1] and ctd_depth[2] m
+ctd <- read.csv(ctd_file, check.names = FALSE) %>%
+  mutate(site = fix_site(site)) %>%
+  filter(site %in% reef_sites, depth >= ctd_depth[1], depth <= ctd_depth[2]) %>%
+  transmute(site, temperature = `Temperature.CTD`, salinity = Salinity, chla = `Chl-a`)
+
+stopifnot("Not every site is in the nutrient file" = all(reef_sites %in% nut$site),
+          "Not every site is in the CTD file"      = all(reef_sites %in% ctd$site))
+
+# Mean, min, max and n per site and variable
+site_stats <- function(df) {
+  df %>%
+    pivot_longer(-any_of(c("site", "depth", "replicate")), names_to = "variable", values_to = "value") %>%
+    group_by(site, variable) %>%
+    summarise(mean = mean(value, na.rm = TRUE), min = min(value, na.rm = TRUE),
+              max = max(value, na.rm = TRUE), n = sum(!is.na(value)), .groups = "drop")
+}
+stats <- bind_rows(site_stats(ctd), site_stats(nut))
+
+# Site values in the metadata (used in all models)
+meta_values <- env %>%
+  group_by(site) %>%
+  summarise(across(all_of(table1_vars$column), first), .groups = "drop") %>%
+  pivot_longer(-site, names_to = "column", values_to = "metadata") %>%
+  left_join(select(table1_vars, variable, column), by = "column")
+
+# Formatted Table 1: "metadata value (raw min–max)", sites by increasing DIN
+din_order <- meta_values %>% filter(variable == "DIN") %>% arrange(metadata) %>% pull(site)
+n_samples <- dplyr::count(nut, site, name = "Water samples")
+table1 <- stats %>%
+  left_join(select(meta_values, site, variable, metadata), by = c("site", "variable")) %>%
+  left_join(select(table1_vars, variable, label, digits), by = "variable") %>%
+  mutate(cell = paste0(fmt(metadata, digits), " (", fmt(min, digits), "–", fmt(max, digits), ")")) %>%
+  select(site, label, cell) %>%
+  pivot_wider(names_from = label, values_from = cell) %>%
+  left_join(n_samples, by = "site") %>%
+  mutate(site = factor(site, levels = din_order)) %>%
+  arrange(site) %>%
+  mutate(Site = unname(site_labels[as.character(site)])) %>%
+  select(Site, `Water samples`, all_of(table1_vars$label))
+table1
+save_tab(table1, "T3_table1_environment_per_site")
+
+# Raw means vs the site values in the metadata (used in all models)
+raw_vs_meta <- stats %>%
+  left_join(meta_values, by = c("site", "variable")) %>%
+  mutate(rel_diff = abs(mean - metadata) / abs(metadata),
+         differs  = rel_diff > 0.05) %>%
+  select(site, variable, raw_mean = mean, metadata, rel_diff, differs, n) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+filter(raw_vs_meta, differs)   # site values that do not match the raw measurements
+if (any(raw_vs_meta$differs))
+  warning("Some metadata site values (used in the models) differ from the mean of the raw measurements: see T6")
+save_tab(raw_vs_meta, "T6_raw_vs_metadata")
+beep(2)
+```

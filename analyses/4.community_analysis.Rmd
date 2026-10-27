@@ -1,0 +1,1231 @@
+---
+title: "4. Microbial community analysis of reef BCMs in Raja Ampat"
+author: "Stephanie Martinez"
+date: "2024-09-30"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r root, include = FALSE}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
+
+# Notebook setup
+
+All analyses in this script use the full dataset (all reef mats with at least 10,000 reads, 8 reef sites; see 2.reads_filtering.Rmd).
+Colour- and substrate-based analyses are in 5.morphotypes.Rmd. The environmental predictors were selected in 3.environmental_correlations.Rmd.
+
+Outputs are numbered in the order they are produced:
+
+- Figures: `figures/4.community/F<n>_<name>.pdf`
+- Tables:  `outputs/4.community/T<n>_<name>.docx` (+ `.csv`)
+
+```{r setup, echo=FALSE, warning=FALSE}
+# Only the packages used in this script are loaded.
+# plyr is NOT loaded: attached after dplyr it masks summarise()/mutate() and ignores group_by().
+# tidylog is loaded last so its dplyr wrappers are the active ones.
+packages_used <- c("dplyr", "tidyr", "tibble", "ggplot2", "patchwork", "scales",
+                   "phyloseq", "microbiome", "vegan", "pairwiseAdonis", "MiscMetabar",
+                   "dunn.test", "glmmTMB", "flextable", "officer", "beepr", "tidylog")
+
+suppressMessages(invisible(
+  lapply(packages_used, library, character.only = TRUE)
+))
+
+missing_pkgs <- setdiff(packages_used, .packages())
+if (length(missing_pkgs) == 0) {
+  message("All packages loaded correctly")
+} else {
+  message("Packages that did not load: ", paste(missing_pkgs, collapse = ", "))
+}
+rm(packages_used, missing_pkgs)
+
+theme_set(theme_minimal())
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+
+# Same flextable defaults as in 5.morphotypes.Rmd
+set_flextable_defaults(theme_fun = theme_vanilla, font.size = 10, bold_header = TRUE)
+
+# Output folders
+fig_dir <- "figures/4.community"
+tab_dir <- "outputs/4.community"
+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(tab_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Save a figure as PDF in fig_dir
+save_fig <- function(plot, name, width = 11, height = 11) {
+  ggsave(file.path(fig_dir, paste0(name, ".pdf")), plot = plot,
+         device = cairo_pdf, width = width, height = height, units = "in")
+}
+
+# Save one or more tables as one Word file (+ one csv per table) in tab_dir
+save_tab <- function(tables, name) {
+  if (is.data.frame(tables)) tables <- setNames(list(tables), name)
+  doc <- read_docx()
+  for (nm in names(tables)) {
+    doc <- body_add_par(doc, nm, style = "Normal")
+    doc <- body_add_flextable(doc, autofit(flextable(tables[[nm]])))
+    doc <- body_add_par(doc, "")
+  }
+  print(doc, target = file.path(tab_dir, paste0(name, ".docx")))
+  for (nm in names(tables)) {
+    suffix <- if (length(tables) > 1) paste0("_", gsub("[^A-Za-z0-9]+", "_", nm)) else ""
+    write.csv(tables[[nm]], file.path(tab_dir, paste0(name, suffix, ".csv")), row.names = FALSE)
+  }
+}
+
+# Results table helper (rounded, optional "Source" column from row names)
+to_table <- function(x, source_col = TRUE, digits = 4) {
+  x <- as.data.frame(x)
+  if (source_col) x <- rownames_to_column(x, "Source")
+  mutate(x, across(where(is.numeric), ~ round(.x, digits)))
+}
+
+# Community matrix (samples as rows) from a phyloseq object, whatever its orientation
+otu_matrix <- function(ps) {
+  m <- as(otu_table(ps), "matrix")
+  if (taxa_are_rows(ps)) m <- t(m)
+  m
+}
+
+# One definition of "unassigned" taxonomy, used by the heatmap and the core microbiome
+is_unassigned <- function(x) {
+  is.na(x) | x == "" |
+    grepl("unknown|unidentified|uncultured|unclassified|metagenome", x, ignore.case = TRUE)
+}
+
+perm <- 9999   # permutations for PERMANOVA / PERMDISP
+
+# p-value correction for ALL multiple comparisons in this script
+# (Dunn tests, pairwise PERMANOVA, Hill number regressions). Same setting in 5.morphotypes.Rmd.
+# "BH" = false discovery rate; "holm" = family-wise error rate.
+p_adj_method <- "BH"
+
+# Kruskal-Wallis + Dunn post-hoc test (two-sided, corrected with p_adj_method)
+kw_dunn <- function(df, value, group, label = value) {
+  kw <- kruskal.test(df[[value]] ~ factor(df[[group]]))
+  invisible(capture.output(
+    d <- dunn.test(df[[value]], factor(df[[group]]), method = tolower(p_adj_method),
+                   altp = TRUE, kw = FALSE, table = FALSE)
+  ))
+  list(
+    kw   = tibble(Index = label, Grouping = group, Chi2 = unname(kw$statistic),
+                  df = unname(kw$parameter), p = kw$p.value),
+    dunn = tibble(Index = label, Comparison = d$comparisons, Z = d$Z,
+                  p = d$altP, p_adj = d$altP.adjusted)
+  )
+}
+
+message(paste0(utf8::as_utf8("\U0001f600"), " All good!"))
+beep(2)
+```
+
+
+#Graphical parameters ggplots
+
+Parameters, palettes and ordering factors for ggplots. 
+
+Site codes in the data are converted to display names once, when the data are loaded, so every plot and table uses the manuscript names.
+
+```{r}
+# Site order: by reef DIN (codes as in the data)
+order_sitetype <- c("MiosKon", "LumbaLumba", "SouthKri", "Arborek",
+                    "Yenbuba", "New Reef", "SoridoBay", "GracesWall")
+
+order_sitetype <- c("LumbaLumba", "Yenbuba", "SouthKri", "MiosKon",
+                     "GracesWall", "New Reef", "SoridoBay", "Arborek")
+
+# Display names (data code = display name)
+site_labels <- c("MiosKon"    = "MiosKon",
+                 "LumbaLumba" = "Lumba-Lumba",
+                 "SouthKri"   = "SouthKri",
+                 "Arborek"    = "Arborek",
+                 "Yenbuba"    = "Yenbuba",
+                 "New Reef"   = "New Reef",
+                 "SoridoBay"  = "Sorido Bay",
+                 "GracesWall" = "Grace's Wall")
+
+site_levels <- unname(site_labels[order_sitetype])   # display names in plotting order
+
+# Heatmap palette
+phylum_colors <- c(
+  "Cyanobacteriota"    = "#b02b25",  # red
+  "Proteobacteria"     = "#185563",  # dark teal
+  "Bacteroidota"       = "#00A087",  # green
+  "Planctomycetota"    = "#0C2C84",  # navy
+  "Verrucomicrobiota"  = "#F39B7F",  # salmon
+  "Crenarchaeota"      = "#FFC857",  # amber
+  "Actinobacteriota"   = "#F26419",  # orange
+  "Bdellovibrionota"   = "#7B4F9E",  # purple
+  "Unidentified"       = "#FFFFFF"   # white
+)
+
+# Barplot palette (top 10 phyla + Unidentified + Other)
+all_colors <- c(
+  "Cyanobacteriota"   = "#b02b25",
+  "Proteobacteria"    = "#185563",
+  "Bacteroidota"      = "#00A087",
+  "Planctomycetota"   = "#0C2C84",
+  "Verrucomicrobiota" = "#F39B7F",
+  "Crenarchaeota"     = "#FFC857",
+  "Acidobacteriota"   = "#9071C1",
+  "Actinobacteriota"  = "#F26419",
+  "Fusobacteriota"    = "#7E6148",
+  "Desulfobacterota"  = "#1B065E",
+  "Myxococcota"       = "#8491B4",
+  "Bdellovibrionota"  = "#7B4F9E",
+  "Unidentified"      = "grey90",
+  "Other Phyla"       = "grey70"
+)
+
+# Site shapes and colours (keyed by display name)
+shape_sites <- c("Arborek"      = 16,  
+                 "Grace's Wall" = 17,  
+                 "Lumba-Lumba"  = 15, 
+                 "MiosKon"      = 18,  
+                 "New Reef"     = 8,   
+                 "Sorido Bay"   = 1,   
+                 "SouthKri"     = 2,  
+                 "Yenbuba"      = 0)   
+
+col_sites <- c("MiosKon"      = "#00A087",
+               "Lumba-Lumba"  = "#FFC857",
+               "SouthKri"     = "#F39B7F",
+               "Arborek"      = "#7E6148",
+               "Yenbuba"      = "#3C5488",
+               "New Reef"     = "#b02b25",
+               "Sorido Bay"   = "#1B065E",
+               "Grace's Wall" = "#4DBBD5")
+
+# Hill number labels
+hill_labels <- c(Hill_0 = "Richness (q = 0)",
+                 Hill_1 = "Exp. Shannon (q = 1)",
+                 Hill_2 = "Inv. Simpson (q = 2)")
+
+# Environmental variables retained after the collinearity check (|r| < 0.75; Fig. S6)
+# Raw column name = axis label. Add units to the labels if needed.
+env_vars <- c(DIN         = "DIN",
+              mean.PO4    = "PO₄³⁻",
+              temperature = "Temperature",
+              chla        = "Chl-a")
+```
+
+
+# Introduction
+
+The stacked (long) TSS dataframe is used for proportions, barplots and the heatmap. The TSS phyloseq object is used for the core microbiome, alpha and beta diversity.
+
+# Data upload
+
+Starting from the TSS stacked dataframe and the TSS phyloseq object.
+
+```{r data upload, echo=FALSE}
+taxa_stacked <- read.csv("data/ASV_taxa_stacked_tss.csv") %>%
+  dplyr::rename(ASV = OTU) %>%
+  select(-any_of(c("X", "X.1", "X.2")))
+
+# Every site code must have a display name
+stopifnot(all(unique(taxa_stacked$site) %in% names(site_labels)))
+
+# Unassigned taxonomy -> "Unidentified"; site codes -> display names
+taxa_stacked <- taxa_stacked %>%
+  mutate(Phylum = ifelse(is_unassigned(Phylum), "Unidentified", Phylum),
+         Genus  = ifelse(is_unassigned(Genus),  "Unidentified", Genus),
+         site   = unname(site_labels[site]))
+
+reef_tss <- readRDS("data/bcms_filtered&tss_reefs_raja2023.rds")
+
+# Number of samples per site (used to average per site)
+sample_n_site <- taxa_stacked %>%
+  distinct(site, sample_id) %>%
+  dplyr::count(site, name = "n_samples")
+
+# ---- Checks ----
+# 1. Each sample should sum to 1 (TSS)
+summary(taxa_stacked %>%
+          group_by(sample_id) %>%
+          summarise(total = sum(relative_abundance, na.rm = TRUE)) %>%
+          pull(total))
+
+# 2. Every sample should have the same number of rows (zeros kept)
+if (n_distinct(dplyr::count(taxa_stacked, sample_id)$n) > 1)
+  message("Samples have different numbers of rows: zeros may have been dropped from the stacked file")
+
+# 3. Stacked file and phyloseq object should contain the same samples
+setdiff(unique(taxa_stacked$sample_id), sample_names(reef_tss))
+setdiff(sample_names(reef_tss), unique(taxa_stacked$sample_id))
+```
+
+## Community and environmental matrices
+
+One community matrix and one environmental table are used for every test below (alpha diversity, PERMANOVA, PCoA, dbRDA), so all analyses use the same samples in the same order.
+
+```{r matrices}
+# Community matrix: samples as rows, ASVs as columns (empty ASVs removed)
+community.matx <- otu_matrix(reef_tss)
+community.matx <- community.matx[, colSums(community.matx) > 0, drop = FALSE]
+dim(community.matx)
+
+# Metadata in the same row order, with scaled environmental variables
+# (only the four variables retained after the collinearity check)
+env <- as(sample_data(reef_tss), "data.frame")
+env <- env[rownames(community.matx), , drop = FALSE]
+env <- env %>%
+  mutate(sample_id   = rownames(community.matx),
+         site        = factor(site_labels[site], levels = site_levels),
+         DIN.scaled  = as.numeric(scale(DIN)),
+         PO4.scaled  = as.numeric(scale(mean.PO4)),
+         temp.scaled = as.numeric(scale(temperature)),
+         chla.scaled = as.numeric(scale(chla)))
+rownames(env) <- env$sample_id
+
+stopifnot(identical(rownames(env), rownames(community.matx)),
+          !anyNA(env$site))
+
+# Environmental variables are measured per site: each site should have one value per variable
+env %>%
+  group_by(site) %>%
+  summarise(across(all_of(names(env_vars)), n_distinct), .groups = "drop")
+```
+
+#------------------------------
+
+# Taxa proportions & barplots
+
+By phylum
+```{r}
+phylum_totals <- taxa_stacked %>%
+  group_by(Phylum) %>%
+  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
+  arrange(desc(percentage))
+phylum_totals
+```
+
+By Genus
+```{r}
+genus_totals <- taxa_stacked %>%
+  group_by(Phylum, Genus) %>%
+  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
+  arrange(desc(percentage))
+genus_totals
+```
+
+## Top 10 Phyla barplot
+
+Prepare dataframe
+```{r}
+# Top 10 most abundant phyla overall (phylum_totals is already sorted)
+top10_phyla <- head(phylum_totals$Phylum, 10)
+
+# Collapse other phyla into "Other Phyla"
+taxa_stacked_mod <- taxa_stacked %>%
+  mutate(Phylum = ifelse(Phylum %in% top10_phyla, Phylum, "Other Phyla"))
+
+# Percentage per site (pooled within site = mean across samples, since each sample sums to 1)
+phylum_percentages <- taxa_stacked_mod %>%
+  group_by(site, Phylum) %>%
+  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  group_by(site) %>%
+  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
+  ungroup()
+
+# Stacking order: preferred order first, any other top-10 phylum next,
+# then Unidentified and Other Phyla (no phylum silently turns into NA)
+phylum_order_pref <- c("Cyanobacteriota", "Proteobacteria", "Bacteroidota", "Planctomycetota",
+                       "Crenarchaeota", "Verrucomicrobiota", "Actinobacteriota", "Acidobacteriota",
+                       "Fusobacteriota", "Desulfobacterota", "Myxococcota", "Bdellovibrionota")
+phylum_order <- c(intersect(phylum_order_pref, top10_phyla),
+                  setdiff(top10_phyla, c(phylum_order_pref, "Unidentified")),
+                  intersect("Unidentified", top10_phyla),
+                  "Other Phyla")
+
+missing_cols <- setdiff(phylum_order, names(all_colors))
+if (length(missing_cols) > 0) message("Phyla without a colour: ", paste(missing_cols, collapse = ", "))
+
+phylum_percentages <- phylum_percentages %>%
+  mutate(Phylum = factor(Phylum, levels = phylum_order),
+         site   = factor(site, levels = site_levels))
+```
+
+Summary
+```{r}
+dominant_phyla <- c("Cyanobacteriota", "Proteobacteria", "Bacteroidota", "Planctomycetota")
+
+# 1. Overall percentage per phylum (mean proportion of reads per sample)
+overall <- phylum_percentages %>%
+  group_by(Phylum) %>%
+  summarise(total = sum(total_abundance), .groups = "drop") %>%
+  mutate(percentage = round(total / sum(total) * 100, 2)) %>%
+  arrange(desc(percentage))
+overall
+
+# Combined % of the four dominant phyla
+overall %>% filter(Phylum %in% dominant_phyla) %>% summarise(combined = sum(percentage))
+
+# 2. Range across sites (min and max, with site names)
+site_ranges <- phylum_percentages %>%
+  filter(Phylum %in% dominant_phyla) %>%
+  group_by(Phylum) %>%
+  summarise(
+    min_pct  = round(min(percentage), 2),
+    min_site = site[which.min(percentage)],
+    max_pct  = round(max(percentage), 2),
+    max_site = site[which.max(percentage)],
+    .groups  = "drop"
+  )
+site_ranges
+
+# 3. Mean ± SD across samples (same basis as the overall %)
+phylum_sample_stats <- taxa_stacked %>%
+  group_by(sample_id, Phylum) %>%
+  summarise(ra = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  complete(sample_id, Phylum, fill = list(ra = 0)) %>%
+  filter(Phylum %in% dominant_phyla) %>%
+  group_by(Phylum) %>%
+  summarise(mean_pct = round(mean(ra) * 100, 1),
+            sd_pct   = round(sd(ra) * 100, 1),
+            .groups  = "drop")
+phylum_sample_stats
+
+# 4. Wide table of site percentages (supplementary table)
+site_table <- phylum_percentages %>%
+  select(site, Phylum, percentage) %>%
+  mutate(percentage = round(percentage, 2)) %>%
+  arrange(site) %>%
+  pivot_wider(names_from = site, values_from = percentage, values_fill = 0)
+site_table
+
+save_tab(site_table, "T1_phylum_percentages_site")
+```
+
+Plot
+```{r}
+phyla_stack_plot <-
+  ggplot(phylum_percentages, aes(x = site, y = percentage, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = all_colors) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1),
+                     expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Site", y = "Relative Abundance (%)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+phyla_stack_plot
+
+save_fig(phyla_stack_plot, "F1_phyla_top10_site")
+```
+
+## Top 10 Phyla x mat
+
+Prepare dataframe
+```{r}
+# Per-sample percentages. Separate name so the site-level table above is not overwritten.
+phylum_percentages_sample <- taxa_stacked_mod %>%
+  group_by(site, sample_id, Phylum) %>%
+  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  group_by(sample_id) %>%
+  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
+  ungroup() %>%
+  mutate(Phylum = factor(Phylum, levels = phylum_order),
+         site   = factor(site, levels = site_levels))
+```
+
+Plot
+```{r}
+phyla_sample_plot <-
+  ggplot(phylum_percentages_sample, aes(x = sample_id, y = percentage, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = all_colors) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1),
+                     expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "", y = "Relative Abundance (%)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ site, scales = "free_x", nrow = 2, ncol = 4)
+phyla_sample_plot
+
+save_fig(phyla_sample_plot, "F2_phyla_top10_mats")
+```
+
+## Top 50 Genus
+
+For results and supplements descriptions
+```{r}
+topN_genus <- 50
+
+# Top 50 most abundant genera overall (genus_totals is already sorted)
+top_genus <- unique(head(genus_totals$Genus, topN_genus))
+
+# Collapse other genera into "Other genus" (with one shared phylum label, so it is not split across phyla)
+Genus_percentages <- taxa_stacked %>%
+  mutate(Genus  = ifelse(Genus %in% top_genus, Genus, "Other genus"),
+         Phylum = ifelse(Genus == "Other genus", "Mixed", Phylum)) %>%
+  group_by(site, Phylum, Genus) %>%
+  summarise(total_abundance = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  group_by(site) %>%
+  mutate(percentage = 100 * total_abundance / sum(total_abundance)) %>%
+  ungroup()
+
+# Consistency check: no genus can exceed its own phylum at a site. Should return 0 rows.
+phylum_site_full <- taxa_stacked %>%
+  group_by(site, Phylum) %>%
+  summarise(total = sum(relative_abundance, na.rm = TRUE), .groups = "drop_last") %>%
+  mutate(phylum_pct = 100 * total / sum(total)) %>%
+  ungroup() %>%
+  select(-total)
+
+Genus_percentages %>%
+  filter(Genus != "Other genus") %>%
+  left_join(phylum_site_full, by = c("site", "Phylum")) %>%
+  filter(percentage > phylum_pct + 1e-6)
+```
+
+#------------------------------
+
+# Heatmap Community
+
+Adjust the taxonomic value and the topN. TopN = Top most abundant of a defined range and taxonomic level.
+
+```{r heatmap settings}
+fill_level <- "Phylum"   # level used for the colour sidebar
+taxa_level <- "Genus"    # level shown as heatmap rows
+topN       <- 50
+all        <- FALSE      # TRUE = plot every taxon instead of the top N
+```
+
+## Temporary df
+
+```{r temporary dataframe}
+# Site means = sum of relative abundance / number of samples in the site
+toplot <- taxa_stacked %>%
+  dplyr::rename(fill = all_of(fill_level), taxa = all_of(taxa_level)) %>%
+  mutate(
+    unident = is_unassigned(taxa),
+    taxa    = ifelse(unident, "Unidentified", taxa),
+    fill    = ifelse(unident, "Unidentified", fill)
+  ) %>%
+  group_by(site, taxa, fill) %>%
+  summarise(total = sum(relative_abundance, na.rm = TRUE), .groups = "drop") %>%
+  left_join(sample_n_site, by = "site") %>%
+  mutate(relative_abundance = total / n_samples) %>%
+  select(-total, -n_samples) %>%
+  # add explicit zeros so absent taxa get an "Absent" tile
+  complete(nesting(taxa, fill), site, fill = list(relative_abundance = 0))
+
+# Select the top N taxa by mean abundance across sites
+if (all) topN <- n_distinct(toplot$taxa)
+
+selected <- toplot %>%
+  group_by(taxa) %>%
+  summarise(meanAbun = mean(relative_abundance), .groups = "drop") %>%
+  slice_max(meanAbun, n = topN, with_ties = FALSE) %>%
+  pull(taxa)
+
+toplot <- toplot %>% filter(taxa %in% selected)
+```
+
+## Heatmap plot
+
+Heatmap of the top 50 most abundant genera
+
+```{r heatmap plot}
+# Abundance classes: lower limits as proportions, labels in %
+abund_breaks <- c(0, 0.0025, 0.005, 0.01, 0.025, 0.10, Inf)
+abund_labels <- c("<0.25", "0.25–0.5", "0.5–1", "1–2.5", "2.5–10", ">10")
+
+abund_colors <- c(
+  "Absent"          = "#FFFFFF",
+  "<0.25"           = "#F2F2F2",
+  "0.25–0.5"   = "#D1D1D1",
+  "0.5–1"      = "#ADADAD",
+  "1–2.5"      = "#878787",
+  "2.5–10"     = "#585858",
+  ">10"             = "#262626"
+)
+
+dark_classes <- c("2.5–10", ">10")  # these get white labels
+
+heatmap_data <- toplot   # already one value per site and taxon
+
+# Phylum order: by total abundance, Unidentified always last
+heatmap_phylum_order <- heatmap_data %>%
+  group_by(fill) %>%
+  summarise(totalAbun = sum(relative_abundance), .groups = "drop") %>%
+  arrange(-totalAbun) %>%
+  pull(fill)
+
+heatmap_phylum_order <- c(
+  heatmap_phylum_order[!grepl("Unidentified", heatmap_phylum_order)],
+  heatmap_phylum_order[grepl("Unidentified", heatmap_phylum_order)]
+)
+
+# Genus order: grouped by phylum, highest to lowest within phylum.
+# Reversed because ggplot draws y levels bottom-to-top.
+taxa_order <- heatmap_data %>%
+  mutate(fill = factor(fill, levels = heatmap_phylum_order)) %>%
+  group_by(fill, taxa) %>%
+  summarise(meanAbun = mean(relative_abundance), .groups = "drop") %>%
+  arrange(fill, -meanAbun) %>%
+  pull(taxa) %>%
+  unique() %>%
+  rev()
+
+# True zeros get their own "Absent" class; labels use 1 decimal, "<0.1" for tiny values, "–" for absent
+heatmap_data <- heatmap_data %>%
+  mutate(
+    fill  = factor(fill, levels = heatmap_phylum_order),
+    taxa  = factor(taxa, levels = taxa_order),
+    site  = factor(site, levels = site_levels),
+    abund_class = as.character(cut(relative_abundance, breaks = abund_breaks,
+                                   labels = abund_labels, right = FALSE)),
+    abund_class = ifelse(relative_abundance == 0, "Absent", abund_class),
+    abund_class = factor(abund_class, levels = names(abund_colors)),
+    cell_label  = case_when(
+      relative_abundance == 0    ~ "–",
+      relative_abundance < 0.001 ~ "<0.1",
+      TRUE ~ as.character(round(relative_abundance * 100, 1))
+    )
+  )
+
+# Checks
+missing_phyla <- setdiff(levels(heatmap_data$fill), names(phylum_colors))
+if (length(missing_phyla) > 0)
+  message("Phyla missing from palette: ", paste(missing_phyla, collapse = ", "))
+
+if (any(is.na(heatmap_data$site)))
+  message("Sites not in site_levels: ",
+          paste(setdiff(unique(toplot$site), site_levels), collapse = ", "))
+
+# 1. Phylum sidebar
+phylum_anno <- heatmap_data %>%
+  distinct(taxa, fill) %>%
+  mutate(x = 1)
+
+p_phylum <- ggplot(phylum_anno, aes(x = x, y = taxa, fill = fill)) +
+  geom_tile(width = 0.8) +
+  scale_fill_manual(values = phylum_colors, name = "Phylum") +
+  labs(y = "Phylum") +
+  theme_void() +
+  theme(axis.title.y = element_text(angle = 90, size = 12, face = "bold", vjust = 0.5))
+
+# 2. Abundance heatmap
+p_abund <- ggplot(heatmap_data, aes(x = site, y = taxa, fill = abund_class)) +
+  geom_tile(colour = "black", linewidth = 0.1) +
+  geom_text(aes(label = cell_label, colour = abund_class %in% dark_classes),
+            size = 4.25) +
+  scale_colour_manual(values = c(`TRUE` = "white", `FALSE` = "black"), guide = "none") +
+  scale_fill_manual(
+    values = abund_colors,
+    drop   = FALSE,
+    name   = "Relative\nAbundance (%)",
+    guide  = guide_legend(
+      reverse      = TRUE,
+      override.aes = list(colour = "grey", linewidth = 0.3)
+    )
+  ) +
+  labs(x = "Sampling Sites", y = NULL) +
+  theme_minimal() +
+  theme(
+    axis.title.x      = element_text(size = 14),
+    axis.text.x       = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                     colour = "black", face = "bold", size = 11),
+    axis.text.y       = element_text(colour = "black", face = "bold.italic", size = 11,
+                                     hjust = 1, vjust = 0.5),
+    axis.line         = element_line(colour = "black", linewidth = 0.75),
+    axis.ticks        = element_line(colour = "black", linewidth = 0.5),
+    axis.ticks.length = unit(0.2, "cm"),
+    panel.grid        = element_blank(),
+    legend.text       = element_text(size = 10, face = "bold", colour = "black"),
+    legend.title      = element_text(size = 11, face = "bold")
+  )
+
+# 3. Combine
+asv_heatmap <- p_phylum + p_abund +
+  plot_layout(widths = c(1.25, 12), guides = "collect") &
+  theme(legend.position = "right", legend.key = element_blank())
+
+print(asv_heatmap)
+
+save_fig(asv_heatmap, "F3_heatmap_top50_genus")
+```
+
+#------------------------------
+
+# Core Microbiome
+
+## Core ASVs
+
+```{r core-members}
+# Core: ASVs with abundance > 0 in more than 90% of samples
+# (include.lowest = FALSE makes both cut-offs strict)
+core_reef <- core_members(reef_tss, detection = 0,
+                          prevalence = 0.90, include.lowest = FALSE)
+
+length(core_reef)   # number of core ASVs
+nsamples(reef_tss)     # number of samples
+```
+
+## Abundance and prevalence of the core ASVs
+
+```{r core-data}
+tax_df <- as.data.frame(as(tax_table(reef_tss), "matrix")) %>%
+  rownames_to_column("ASV") %>%
+  select(ASV, Phylum, Genus) %>%
+  mutate(
+    Phylum      = ifelse(is_unassigned(Phylum), "Unidentified", Phylum),
+    genus_known = !is_unassigned(Genus)
+  )
+
+# Abundance matrix: samples as rows, core ASVs as columns
+abund <- otu_matrix(reef_tss)[, core_reef, drop = FALSE]
+
+# Overall summary per core ASV
+core_summary <- tibble(
+  ASV        = colnames(abund),
+  Prevalence = colMeans(abund > 0),
+  MeanAbund  = colMeans(abund)
+) %>%
+  left_join(tax_df, by = "ASV")
+
+# Phyla ordered by number of core ASVs, Unidentified last
+core_phylum_order <- core_summary %>% dplyr::count(Phylum, sort = TRUE) %>% pull(Phylum)
+core_phylum_order <- c(setdiff(core_phylum_order, "Unidentified"), intersect(core_phylum_order, "Unidentified"))
+
+# Labels: genus name if assigned (numbered if a genus has several core ASVs), otherwise the ASV ID
+core_summary <- core_summary %>%
+  mutate(Phylum = factor(Phylum, levels = core_phylum_order)) %>%
+  arrange(Phylum, desc(MeanAbund)) %>%
+  group_by(Genus) %>%
+  mutate(label = case_when(
+    !genus_known ~ ASV,
+    n() > 1      ~ paste(Genus, row_number()),
+    TRUE         ~ Genus
+  )) %>%
+  ungroup()
+
+core_summary
+```
+
+Save core summary as table
+
+```{r core-table}
+# Read share from unrounded values
+core_share <- round(sum(core_summary$MeanAbund) * 100, 1)
+
+core_table <- core_summary %>%
+  arrange(Phylum, desc(MeanAbund)) %>%
+  transmute(
+    Phylum = as.character(Phylum),
+    Genus  = ifelse(genus_known, Genus, "Unidentified"),
+    ASV,
+    `Prevalence (%)`              = round(Prevalence * 100, 1),
+    `Mean relative abundance (%)` = round(MeanAbund * 100, 2)
+  )
+
+core_flex <- flextable(core_table) %>%
+  italic(i = ~ Genus != "Unidentified", j = "Genus") %>%   # genus names in italics
+  merge_v(j = "Phylum") %>%                               # one phylum label per block
+  valign(j = "Phylum", valign = "top") %>%
+  add_footer_lines(paste0(
+    "Core ASVs present in more than 90% of samples (n = ", nsamples(reef_tss), "). ",
+    "Together they account for ", core_share, "% of the reads.")) %>%
+  autofit()
+core_flex
+
+save_as_docx("Core microbiome ASVs" = core_flex,
+             path = file.path(tab_dir, "T2_core_microbiome_asvs.docx"))
+write.csv(core_table, file.path(tab_dir, "T2_core_microbiome_asvs.csv"), row.names = FALSE)
+```
+
+## Prevalence across detection thresholds
+
+```{r core-thresholds, fig.width = 8, fig.height = 9}
+# Abundance matrix: ASVs as rows, samples as columns
+abund_mat <- t(otu_matrix(reef_tss))
+
+# ">0" and "0.01%" gave identical results, so 0.01% is left out
+detections <- c(0, 0.0005, 0.001, 0.005, 0.01, 0.02)   # proportions
+det_labels <- c(">0", "0.05", "0.1", "0.5", "1", "2")   # in %
+
+# Prevalence of each core ASV at each detection threshold
+core_thresh <- expand_grid(ASV = core_reef, Detection = detections) %>%
+  rowwise() %>%
+  mutate(Prevalence = mean(abund_mat[ASV, ] > Detection)) %>%
+  ungroup() %>%
+  left_join(select(core_summary, ASV, label, genus_known, Phylum), by = "ASV")
+
+# Robustness score: mean prevalence across all thresholds
+robustness <- core_thresh %>%
+  group_by(label) %>%
+  summarise(score = mean(Prevalence), .groups = "drop") %>%
+  arrange(score)   # lowest first, so the most robust ends up on top
+
+core_thresh <- core_thresh %>%
+  mutate(
+    label     = factor(label, levels = robustness$label),
+    Detection = factor(Detection, levels = detections, labels = det_labels)
+  )
+
+# Genus names in italics, ASV IDs in plain text
+italic_genera <- core_summary %>% filter(genus_known) %>% pull(label)
+label_fun <- function(x) {
+  parse(text = ifelse(x %in% italic_genera,
+                      paste0("italic('", x, "')"),
+                      paste0("'", x, "'")))
+}
+
+core_thresh.plot <- ggplot(core_thresh, aes(x = Detection, y = label, fill = Prevalence)) +
+  geom_tile(colour = "white", linewidth = 0.5) +
+  geom_text(aes(label = round(Prevalence * 100), colour = Prevalence > 0.6), size = 3) +
+  scale_colour_manual(values = c(`TRUE` = "white", `FALSE` = "black"), guide = "none") +
+  scale_fill_gradient(low = "#F7F7F7", high = "#252525",
+                      limits = c(0, 1), labels = scales::percent,
+                      name = "Prevalence") +
+  scale_y_discrete(labels = label_fun) +
+  facet_grid(Phylum ~ ., scales = "free_y", space = "free_y") +
+  labs(x = "Detection threshold (% relative abundance)", y = NULL) +
+  theme_minimal() +
+  theme(
+    axis.text.x  = element_text(colour = "black", face = "bold", size = 10),
+    axis.text.y  = element_text(size = 9, colour = "black"),
+    strip.text.y = element_text(angle = 0, face = "bold", hjust = 0),
+    panel.grid   = element_blank(),
+    legend.title = element_text(size = 11, face = "bold")
+  )
+
+core_thresh.plot
+
+save_fig(core_thresh.plot, "F4_core_microbiome_thresholds", width = 8, height = 9)
+```
+
+#------------------------------
+
+# Alpha diversity
+
+## Hill numbers
+
+Hill numbers are the number of equiprobable species giving the same diversity value as the observed distribution.
+
+-   Hill number 0: Species richness
+-   Hill number 1: Exponential of Shannon Index
+-   Hill number 2: Inverse of Simpson Index
+
+Using Package "MiscMetabar" (`hill_pq`). Note: the data are TSS-normalised, not rarefied, so richness (q = 0) is still sensitive to sequencing depth; q = 1 and q = 2 are much less affected.
+
+```{r hill numbers}
+# hill_pq returns one plot per Hill number; each plot's data holds all three Hill numbers per sample
+hill_site <- hill_pq(reef_tss, "site", add_points = TRUE, one_plot = FALSE)
+hill_raw  <- as.data.frame(hill_site[[1]][["data"]])
+stopifnot(all(c("sample_id", names(hill_labels)) %in% names(hill_raw)))
+
+# Hill numbers + display site names + environmental variables (from env, same samples as beta diversity)
+hill_df <- hill_raw %>%
+  select(sample_id, all_of(names(hill_labels))) %>%
+  inner_join(env %>% select(sample_id, site, all_of(names(env_vars))), by = "sample_id")
+
+stopifnot(nrow(hill_df) == nrow(env))
+
+# Mean ± SD per site
+hill_site_summary <- hill_df %>%
+  group_by(site) %>%
+  summarise(n = n(),
+            across(Hill_0:Hill_2, list(mean = mean, sd = sd)),
+            .groups = "drop") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+hill_site_summary
+```
+
+## Hill numbers across sites
+
+Kruskal-Wallis test per Hill number, followed by two-sided Dunn tests corrected with `p_adj_method`
+
+```{r hill site tests}
+site_kwd <- lapply(names(hill_labels), function(h) kw_dunn(hill_df, h, "site", hill_labels[[h]]))
+
+site_tests <- bind_rows(lapply(site_kwd, `[[`, "kw")) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+site_tests
+
+site_pairwise <- bind_rows(lapply(site_kwd, `[[`, "dunn")) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+site_pairwise %>% filter(p_adj < 0.05)
+
+save_tab(setNames(list(site_tests, site_pairwise),
+                  c("Kruskal-Wallis across sites", paste0("Dunn tests (", p_adj_method, ")"))),
+         "T3_hill_numbers_sites")
+```
+
+Plot
+
+```{r hill site plot}
+hill_long <- hill_df %>%
+  pivot_longer(all_of(names(hill_labels)), names_to = "hill", values_to = "value") %>%
+  mutate(hill = factor(hill, levels = names(hill_labels)))
+
+# Kruskal-Wallis result in each panel
+hill_caption <- site_tests %>%
+  mutate(hill  = factor(names(hill_labels), levels = names(hill_labels)),
+         label = paste0("Kruskal-Wallis χ² = ", round(Chi2, 2),
+                        ", df = ", df, ", p = ", signif(p, 2)))
+
+hill_site_plot <- ggplot(hill_long, aes(x = site, y = value)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(colour = site), width = 0.2, alpha = 0.7, size = 1.8) +
+  geom_text(data = hill_caption, aes(x = -Inf, y = Inf, label = label),
+            hjust = -0.05, vjust = 1.5, size = 3.5, inherit.aes = FALSE) +
+  scale_colour_manual(values = col_sites, guide = "none") +
+  facet_wrap(~ hill, ncol = 1, scales = "free_y", labeller = labeller(hill = hill_labels)) +
+  labs(x = "", y = "Effective number of ASVs") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        strip.text = element_text(face = "bold"))
+hill_site_plot
+
+save_fig(hill_site_plot, "F5_hill_numbers_sites", width = 8, height = 10)
+```
+
+## Linear relationships vs env
+
+Linear models of each Hill number against each retained environmental variable (DIN, PO₄³⁻, temperature, chl-a)
+
+- The environmental variables are measured once per site, so the models are fitted on **site means** (n = 8 sites per model). Each site counts once, and the mats within a site are not treated as independent replicates.
+- R² and p from `lm()`. Significance (*) uses p adjusted across the 12 models with `p_adj_method`.
+- Model checks: residual normality (Shapiro-Wilk) per model and diagnostic plots below. With 8 points these checks have little power, so look at the plots for single sites with large leverage.
+
+```{r hill site means}
+# Mean (± SE) of each Hill number per site, plus the site's environmental values
+hill_site_means <- hill_df %>%
+  group_by(site) %>%
+  summarise(n_mats = n(),
+            across(all_of(names(hill_labels)),
+                   list(mean = mean, se = ~ sd(.x) / sqrt(n())), .names = "{.col}_{.fn}"),
+            across(all_of(names(env_vars)), first),
+            .groups = "drop")
+hill_site_means
+
+# Long format: one row per site and Hill number
+hill_site_long <- hill_site_means %>%
+  select(site, n_mats, all_of(names(env_vars)), ends_with("_mean"), ends_with("_se")) %>%
+  tidyr::pivot_longer(cols = matches("^Hill_[0-9]_(mean|se)$"),
+                      names_to = c("hill", ".value"),
+                      names_pattern = "^(Hill_[0-9])_(mean|se)$")
+```
+
+```{r hill env models}
+lm_results <- expand_grid(hill = names(hill_labels), env_var = names(env_vars)) %>%
+  rowwise() %>%
+  mutate(
+    fit       = list(lm(reformulate(env_var, response = "mean"),
+                        data = hill_site_long[hill_site_long$hill == hill, ])),
+    n_sites   = nobs(fit),
+    slope     = coef(fit)[[2]],
+    R2        = summary(fit)$r.squared,
+    p         = summary(fit)$coefficients[2, 4],
+    Shapiro_p = shapiro.test(residuals(fit))$p.value
+  ) %>%
+  ungroup() %>%
+  mutate(p_adj = p.adjust(p, method = p_adj_method),
+         sig   = p_adj < 0.05)
+
+lm_table <- lm_results %>%
+  transmute(Index = hill_labels[hill], Variable = env_vars[env_var],
+            n_sites, slope, R2, p, p_adj, Shapiro_p) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+lm_table
+
+save_tab(lm_table, "T4_hill_numbers_env_models")
+```
+
+Model diagnostics (residuals vs fitted and QQ plot for each model)
+
+```{r hill env diagnostics, fig.width = 12, fig.height = 9}
+op <- par(mfrow = c(3, 8), mar = c(3, 3, 2, 1))
+for (i in seq_len(nrow(lm_results))) {
+  plot(lm_results$fit[[i]], which = 1:2, caption = "",
+       main = paste(lm_results$hill[i], "~", lm_results$env_var[i]), cex.main = 0.7)
+}
+par(op)
+```
+
+Panel figure: rows are Hill numbers, columns are environmental variables. Points are site means ± SE. Every model has its regression line; significant regressions (adjusted p < 0.05) are blue, non-significant ones grey.
+
+```{r hill env plot}
+plot_df <- hill_site_long %>%
+  tidyr::pivot_longer(all_of(names(env_vars)), names_to = "env_var", values_to = "env_value") %>%
+  left_join(select(lm_results, hill, env_var, sig), by = c("hill", "env_var")) %>%
+  mutate(hill    = factor(hill, levels = names(hill_labels)),
+         env_var = factor(env_var, levels = names(env_vars)))
+
+lab_df <- lm_results %>%
+  transmute(hill    = factor(hill, levels = names(hill_labels)),
+            env_var = factor(env_var, levels = names(env_vars)),
+            sig,
+            label   = paste0("R² = ", sprintf("%.2f", R2), ifelse(sig, "*", "")))
+
+hill_env_plot <- ggplot(plot_df, aes(x = env_value, y = mean, colour = sig, fill = sig)) +
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE,
+              linewidth = 0.8, alpha = 0.15) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0, alpha = 0.6) +
+  geom_point(size = 2.2) +
+  geom_text(data = lab_df, aes(x = Inf, y = Inf, label = label, colour = sig),
+            hjust = 1.1, vjust = 1.5, size = 3.5, inherit.aes = FALSE) +
+  scale_colour_manual(values = c(`TRUE` = "#2166AC", `FALSE` = "grey45"), guide = "none") +
+  scale_fill_manual(values = c(`TRUE` = "#2166AC", `FALSE` = "grey60"), guide = "none") +
+  facet_grid(hill ~ env_var, scales = "free", switch = "both",
+             labeller = labeller(hill = hill_labels, env_var = env_vars)) +
+  labs(x = NULL, y = NULL) +
+  theme_bw() +
+  theme(strip.placement  = "outside",
+        strip.background = element_blank(),
+        strip.text       = element_text(face = "bold", size = 11))
+hill_env_plot
+
+save_fig(hill_env_plot, "F6_hill_numbers_env_regressions", width = 12, height = 9)
+```
+
+#-------------------------------
+
+# Beta diversity
+
+## Bray-Curtis distance matrix
+
+```{r bray}
+bray_dist <- vegdist(community.matx, method = "bray")
+```
+
+## PERMANOVA across sites
+
+```{r permanova sites}
+permanova.site <- adonis2(community.matx ~ site,
+                          data = env,
+                          permutations = perm,
+                          method = "bray")
+permanova.site
+
+# Homogeneity of multivariate dispersion (PERMDISP).
+# PERMANOVA can be significant because of differences in spread, not only in location;
+# a non-significant PERMDISP supports interpreting the site effect as a compositional difference.
+disp_site <- betadisper(bray_dist, env$site)
+permdisp_site <- permutest(disp_site, permutations = perm)
+permdisp_site
+
+# Pairwise PERMANOVA between sites (corrected with p_adj_method)
+pairwise_site <- pairwise.adonis(community.matx,
+                                 factors    = as.character(env$site),
+                                 sim.method = "bray",
+                                 p.adjust.m = p_adj_method,
+                                 perm       = perm) %>%
+  to_table(source_col = FALSE) %>%
+  arrange(p.adjusted, desc(R2))
+pairwise_site
+
+save_tab(list("PERMANOVA site"            = to_table(permanova.site),
+              "PERMDISP site"             = to_table(permdisp_site$tab),
+              "Pairwise PERMANOVA"        = pairwise_site),
+         "T5_permanova_sites")
+```
+
+Pairwise effect sizes
+
+```{r pairwise plot}
+pairwise_effectsize_site <- pairwise_site %>%
+  mutate(pairs = reorder(pairs, R2)) %>%
+  ggplot(aes(x = R2, y = pairs, colour = p.adjusted < 0.05)) +
+  geom_point(size = 4) +
+  scale_colour_manual(values = c(`FALSE` = "grey50", `TRUE` = "#b02b25")) +
+  labs(x = "Effect size (R²)", y = NULL, colour = paste0("Significant (", p_adj_method, " p < 0.05)")) +
+  theme_bw(base_size = 14) +
+  theme(legend.position = "bottom")
+pairwise_effectsize_site
+
+save_fig(pairwise_effectsize_site, "F7_pairwise_permanova_sites", width = 8, height = 10)
+```
+
+## PCoA (unconstrained)
+
+```{r pcoa}
+pcoa_result <- cmdscale(bray_dist, eig = TRUE, k = 2)
+
+# % variance explained (negative eigenvalues from Bray-Curtis are set to 0 in the total)
+eig_pos  <- pmax(pcoa_result$eig, 0)
+var_expl <- round(100 * eig_pos / sum(eig_pos), 1)
+
+pcoa_df <- data.frame(
+  Axis1 = pcoa_result$points[, 1],
+  Axis2 = -pcoa_result$points[, 2],   # axis flipped for display
+  env
+)
+```
+
+Plot
+
+```{r pcoa plot}
+pcoa_plot <-
+  ggplot(pcoa_df, aes(x = Axis1, y = Axis2, shape = site)) +
+  geom_point(size = 4, stroke = 1.1, colour = "black", alpha = 0.6) +
+  scale_shape_manual(values = shape_sites, name = "Site") +
+  guides(shape = guide_legend(override.aes = list(colour = "black", size = 4, alpha = 0.6))) +
+  labs(x = paste0("PCoA1 (", var_expl[1], "%)"),
+       y = paste0("PCoA2 (", var_expl[2], "%)"),
+       title = "PCoA (Bray-Curtis)") +
+  theme_bw() +
+  theme(legend.position = "bottom", panel.grid = element_blank())
+pcoa_plot
+
+save_fig(pcoa_plot, "F8_pcoa_sites", width = 8, height = 8)
+```
+
+#-------------------------------
+
+# dbRDA
+
+Distance-based RDA (Bray-Curtis) with the four environmental variables retained after the collinearity check: DIN, PO₄³⁻, temperature and chl-a.
+
+The variables are measured per site, so the constrained part of the model can only explain differences between sites (at most 7 df). The model is therefore a test of how much of the between-site variation these four variables account for.
+
+```{r dbrda}
+dbrda_env <- capscale(community.matx ~ DIN.scaled + PO4.scaled + temp.scaled + chla.scaled,
+                      data = env, distance = "bray")
+dbrda_env
+RsquareAdj(dbrda_env)
+
+# Collinearity inside the model (VIF > 10 is usually a problem)
+vif.cca(dbrda_env)
+```
+
+## ANOVA
+
+`by = "terms"` is sequential (depends on the order of the predictors); `by = "margin"` tests each predictor after all others and does not depend on the order, so it is used for the arrow significance in the plot.
+
+```{r dbrda anova}
+anova(dbrda_env, permutations = 999)                # overall model
+anova(dbrda_env, permutations = 999, by = "axis")   # per axis
+anova(dbrda_env, permutations = 999, by = "terms")  # sequential
+anova(dbrda_env, permutations = 999, by = "margin") # marginal
+```
+
+## Partial dbRDA
+
+Each variable tested after removing the effect of the other three.
+
+```{r partial dbrda}
+env_terms <- c("DIN.scaled", "PO4.scaled", "temp.scaled", "chla.scaled")
+
+partial_dbrda <- lapply(env_terms, function(v) {
+  f <- as.formula(paste("community.matx ~", v, "+ Condition(",
+                        paste(setdiff(env_terms, v), collapse = " + "), ")"))
+  m <- capscale(f, data = env, distance = "bray")
+  a <- anova(m, permutations = 999)
+  tibble(Variable = v,
+         Adj_R2   = RsquareAdj(m)$adj.r.squared,
+         F        = a$F[1],
+         p        = a$`Pr(>F)`[1])
+}) %>%
+  bind_rows() %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+partial_dbrda
+```
+
+## Save tables
+
+```{r dbrda tables}
+rsq <- RsquareAdj(dbrda_env)
+s   <- summary(dbrda_env)
+
+dbrda_r2 <- data.frame(Metric = c("R2", "Adj_R2"),
+                       Value  = c(rsq$r.squared, rsq$adj.r.squared)) %>%
+  mutate(Value = round(Value, 4))
+
+dbrda_inertia <- data.frame(
+  Metric     = c("Total", "Constrained", "Unconstrained"),
+  Inertia    = c(s$tot.chi, s$constr.chi, s$unconst.chi),
+  Proportion = c(s$tot.chi, s$constr.chi, s$unconst.chi) / s$tot.chi
+) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+dbrda_overall <- to_table(anova(dbrda_env, permutations = 999))
+dbrda_axis    <- to_table(anova(dbrda_env, permutations = 999, by = "axis"))
+dbrda_margin  <- to_table(anova(dbrda_env, permutations = 999, by = "margin"))
+dbrda_vif     <- data.frame(Variable = names(vif.cca(dbrda_env)),
+                            VIF      = round(vif.cca(dbrda_env), 2))
+
+save_tab(list("R2"                          = dbrda_r2,
+              "Partitioning of inertia"     = dbrda_inertia,
+              "Overall model"               = dbrda_overall,
+              "Axes"                        = dbrda_axis,
+              "Marginal tests"              = dbrda_margin,
+              "Partial dbRDA"               = partial_dbrda,
+              "VIF"                         = dbrda_vif),
+         "T6_dbrda_env")
+```
+
+## Df for plot
+
+```{r dbrda df}
+dbrda_scoresdf <- scores(dbrda_env, display = "sites") %>%
+  as.data.frame() %>%
+  rownames_to_column("sample_id") %>%
+  left_join(env %>% select(sample_id, site), by = "sample_id")
+
+# Arrows, coloured by marginal significance
+var_labels <- c(DIN.scaled  = "DIN",
+                PO4.scaled  = "PO[4]^'3-'",
+                temp.scaled = "Temperature",
+                chla.scaled = "'Chl-a'")
+
+vectorsig <- scores(dbrda_env, display = "bp") %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  left_join(dbrda_margin %>% transmute(variable = Source, significant = `Pr(>F)` < 0.05),
+            by = "variable") %>%
+  mutate(label = var_labels[variable])
+
+# % of total variation per constrained axis
+cap_expl <- round(100 * dbrda_env$CCA$eig / dbrda_env$tot.chi, 1)
+```
+
+## Plot
+
+```{r dbrda plot}
+dbrda_plot <-
+  ggplot(dbrda_scoresdf, aes(x = CAP1, y = CAP2, shape = site)) +
+  geom_point(size = 4, stroke = 1.1, colour = "black", alpha = 0.6) +
+  scale_shape_manual(values = shape_sites, name = "Site") +
+  geom_segment(data = vectorsig,
+               aes(x = 0, y = 0, xend = CAP1, yend = CAP2, colour = significant),
+               arrow = arrow(length = unit(0.25, "cm")),
+               linewidth = 0.8, inherit.aes = FALSE) +
+  geom_text(data = vectorsig,
+            aes(x = CAP1 * 1.12, y = CAP2 * 1.12, label = label, colour = significant,
+                fontface = ifelse(significant, "bold", "plain")),parse = TRUE,
+            size = 4, inherit.aes = FALSE, show.legend = FALSE) +
+  scale_colour_manual(values = c(`TRUE` = "#2166AC", `FALSE` = "black"),
+                      labels = c(`TRUE` = "p < 0.05", `FALSE` = "p > 0.05"),
+                      name = "Marginal test") +
+  guides(shape = guide_legend(override.aes = list(colour = "black", size = 4, alpha = 0.6))) +
+  labs(x = paste0("dbRDA1 (", cap_expl[1], "% of total)"),
+       y = paste0("dbRDA2 (", cap_expl[2], "% of total)"),
+       title = "dbRDA (Bray-Curtis)") +
+  theme_bw() +
+  theme(legend.position = "bottom",panel.grid = element_blank())
+dbrda_plot
+
+save_fig(dbrda_plot, "F9_dbrda_env", width = 8, height = 8)
+```
+
+#-------------------------------
+
+# PCoA + dbRDA
+
+Panel with the unconstrained PCoA (left) and the dbRDA (right).
+
+```{r pcoa dbrda panel}
+pcoa_dbrda_panel <- (pcoa_plot + labs(title = "A. Unconstrained PCoA")) +
+  (dbrda_plot + labs(title = "B. Constrained (dbRDA)")) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+pcoa_dbrda_panel
+
+save_fig(pcoa_dbrda_panel, "F10_pcoa_dbrda_panel", width = 11, height = 6)
+```

@@ -25,7 +25,7 @@ Workflow (adjusted from the DADA2 tutorial, <https://benjjneb.github.io/dada2/tu
 10. Phyloseq object.
 11. Decontamination (decontam, frequency method) and removal of samples with fewer than `min_reads` reads.
 12. Final phyloseq of all samples.
-13. Reef BCM subset.
+13. Reef BCM subset (filtered further in 2.reads_filtering.Rmd).
 
 Outputs are numbered in the order they are produced:
 
@@ -34,7 +34,11 @@ Outputs are numbered in the order they are produced:
 - Checkpoints of the slow steps: `outputs/1.pipeline/rds/<step>.rds` (read back instead of recalculated unless `rerun_steps <- TRUE`)
 - Data products: master ASV table, phyloseq of all samples and phyloseq of the reef BCMs (paths in Settings)
 
-Raw file names from the sequencing laboratory are long. They were shortened beforehand with *"analyses/file_rename.R"*. If the files are already renamed, start here.
+Raw file names from the sequencing laboratory are long. They were shortened beforehand with *"analyses/0.file_rename.R"*. If the files are already renamed, start here.
+
+```{r root, include = FALSE}
+knitr::opts_knit$set(root.dir = rstudioapi::getActiveProject())
+```
 
 # Setup
 
@@ -80,7 +84,7 @@ master_sep      <- ";"
 # ---- Data products ----
 master_file <- "data/ASV_taxonomy_spp_seq_table.csv"   # master table of this run (section 8)
 all_file    <- "data/rds/bcms&sed_all.rds"             # all samples, decontaminated (section 12)
-reef_file   <- "data/bcms_reefs_raja2023.rds"          # reef BCMs (section 13)
+reef_file   <- "data/bcm_reefs_raja2023.rds"           # reef BCMs (section 13), input of 2.reads_filtering.Rmd
 
 # ---- DADA2 parameters (Methods 2.3) ----
 trunc_len   <- c(280, 210)   # from the quality profiles (F1, F2)
@@ -130,7 +134,7 @@ save_tab <- function(table, name) {
   write.csv(table, file.path(tab_dir, paste0(name, ".csv")), row.names = FALSE)
 }
 
-# Run a slow step once and save it; afterwards read it back (as refit_models in scripts 6)
+# Run a slow step once and save it; afterwards read it back (as refit_models in script 6)
 run_or_load <- function(name, expr) {
   path <- file.path(rds_dir, paste0(name, ".rds"))
   if (!rerun_steps && file.exists(path)) {

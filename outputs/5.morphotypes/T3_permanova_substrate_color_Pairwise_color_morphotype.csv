@@ -1,0 +1,4 @@
+"pairs","Df","SumsOfSqs","F.Model","R2","p.value","p.adjusted","sig"
+"Red-brown vs Red",1,0.4661,1.5282,0.0456,0.0589,0.15,""
+"Red-brown vs Lilac",1,0.5324,2.6998,0.4737,0.1,0.15,""
+"Red vs Lilac",1,0.309,0.9905,0.031,0.4964,0.4964,""

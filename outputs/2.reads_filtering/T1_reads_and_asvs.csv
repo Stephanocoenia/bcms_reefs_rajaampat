@@ -1,0 +1,4 @@
+"Step","Mats","ASVs","Reads","Mean reads per mat","Min reads per mat"
+"Reef mats after decontamination",47,18146,1878770,39974,21
+"Mats < 10,000 reads removed",45,18131,1870851,41574,11475
+"ASVs in < 10% of mats removed",45,2486,1343605,29858,5354

@@ -1,0 +1,364 @@
+"Function","Phylum","Taxon","ASVs","reads_pct","pct_of_function","cumulative_pct"
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Desertifilaceae_X",5,18.135,49.91,49.91
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Okeania",1,3.977,10.944,60.854
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Unclassified Cyanophyceae (class)",12,2.743,7.548,68.402
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Unclassified Microcoleaceae (family)",2,2.449,6.739,75.141
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Dapis",6,1.849,5.09,80.231
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Planktothricoides",5,1.788,4.921,85.152
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Spirulina",4,1.644,4.524,89.676
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Vermifilum",2,1.149,3.163,92.839
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Leptochromothrix",5,0.85,2.339,95.178
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Unclassified Oscillatoriales (order)",3,0.541,1.489,96.666
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Parasynechococcus",2,0.366,1.007,97.673
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Inmanicoccus",1,0.139,0.382,98.055
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Prochlorotrichaceae_X",4,0.12,0.329,98.384
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Aegeococcus",5,0.114,0.314,98.698
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Moorena",1,0.078,0.215,98.913
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Picosynechococcus",3,0.064,0.177,99.09
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Roseofilum",1,0.055,0.151,99.241
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Metis",4,0.046,0.126,99.367
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Petrachloros",1,0.034,0.094,99.461
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Solentia",1,0.03,0.082,99.543
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Xenococcus",1,0.029,0.081,99.624
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Unclassified Prochlorococcaceae (family)",1,0.029,0.081,99.705
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Geminobacterium",2,0.028,0.078,99.783
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Caldora",1,0.022,0.062,99.845
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Prochlorococcaceae_XXX",1,0.019,0.052,99.898
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Nodosilineaceae_XXX",1,0.01,0.027,99.925
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Unclassified Thermosynechococcales (order)",1,0.007,0.018,99.943
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Leptothoe",1,0.006,0.015,99.958
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Prochloron",1,0.005,0.013,99.972
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Rhodoploca",1,0.004,0.012,99.983
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Unclassified Chroococcales (order)",1,0.003,0.009,99.993
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)","Cyanobacteriota","Vulcanococcus",1,0.003,0.007,100
+"Chemoheterotrophy","Proteobacteria","Ruegeria",12,2.808,10.914,10.914
+"Chemoheterotrophy","Proteobacteria","Vibrio",17,2.692,10.461,21.374
+"Chemoheterotrophy","Bacteroidota","Winogradskyella",17,1.713,6.657,28.031
+"Chemoheterotrophy","Bacteroidota","Unclassified Cyclobacteriaceae (family)",71,1.153,4.481,32.513
+"Chemoheterotrophy","Planctomycetota","Blastopirellula",53,1.072,4.168,36.681
+"Chemoheterotrophy","Bacteroidota","Muricauda",17,0.835,3.245,39.926
+"Chemoheterotrophy","Verrucomicrobiota","Coraliomargarita",14,0.735,2.857,42.782
+"Chemoheterotrophy","Bacteroidota","Tenacibaculum",13,0.691,2.685,45.468
+"Chemoheterotrophy","Bacteroidota","Lewinella",19,0.578,2.245,47.713
+"Chemoheterotrophy","Proteobacteria","Agaribacter",15,0.566,2.2,49.913
+"Chemoheterotrophy","Verrucomicrobiota","Lentisphaera",15,0.546,2.123,52.036
+"Chemoheterotrophy","Proteobacteria","Unclassified Hyphomonadaceae (family)",3,0.502,1.952,53.988
+"Chemoheterotrophy","Verrucomicrobiota","Rubritalea",5,0.492,1.914,55.901
+"Chemoheterotrophy","Planctomycetota","Rhodopirellula",30,0.472,1.833,57.734
+"Chemoheterotrophy","Bacteroidota","Unclassified Flavobacteriaceae (family)",19,0.465,1.806,59.54
+"Chemoheterotrophy","Bacteroidota","Flexithrix",9,0.425,1.653,61.193
+"Chemoheterotrophy","Bacteroidota","Fabibacter",4,0.418,1.626,62.819
+"Chemoheterotrophy","Proteobacteria","Photobacterium",10,0.417,1.619,64.438
+"Chemoheterotrophy","Bacteroidota","Crocinitomix",15,0.386,1.5,65.938
+"Chemoheterotrophy","Proteobacteria","Thalassotalea",15,0.346,1.346,67.284
+"Chemoheterotrophy","Proteobacteria","Aestuariibacter",9,0.329,1.279,68.563
+"Chemoheterotrophy","Proteobacteria","Erythrobacter",6,0.322,1.253,69.816
+"Chemoheterotrophy","Bacteroidota","Ekhidna",9,0.314,1.219,71.035
+"Chemoheterotrophy","Bacteroidota","Gilvibacter",4,0.309,1.201,72.236
+"Chemoheterotrophy","Proteobacteria","Acinetobacter",3,0.293,1.138,73.374
+"Chemoheterotrophy","Proteobacteria","Shimia",4,0.28,1.089,74.463
+"Chemoheterotrophy","Proteobacteria","Labrenzia",7,0.263,1.024,75.487
+"Chemoheterotrophy","Bacteroidota","Marinoscillum",8,0.249,0.969,76.455
+"Chemoheterotrophy","Bacteroidota","Psychroserpens",4,0.248,0.963,77.418
+"Chemoheterotrophy","Bacteroidota","Zeaxanthinibacter",10,0.245,0.952,78.371
+"Chemoheterotrophy","Proteobacteria","Shewanella",2,0.228,0.888,79.258
+"Chemoheterotrophy","Bacteroidota","Portibacter",8,0.217,0.843,80.101
+"Chemoheterotrophy","Proteobacteria","Pseudoalteromonas",7,0.204,0.794,80.895
+"Chemoheterotrophy","Fusobacteriota","Propionigenium",4,0.192,0.747,81.642
+"Chemoheterotrophy","Bacteroidota","Aquibacter",6,0.187,0.727,82.369
+"Chemoheterotrophy","Acidobacteriota","Acanthopleuribacter",7,0.181,0.703,83.073
+"Chemoheterotrophy","Proteobacteria","Ferrimonas",10,0.179,0.695,83.768
+"Chemoheterotrophy","Proteobacteria","Thaumasiovibrio",13,0.168,0.653,84.42
+"Chemoheterotrophy","Bacteroidota","Aureicoccus",1,0.166,0.645,85.065
+"Chemoheterotrophy","Bacteroidota","Aurantivirga",2,0.159,0.616,85.681
+"Chemoheterotrophy","Proteobacteria","Roseobacter-clade-CHAB-I-5-lineage",5,0.157,0.61,86.291
+"Chemoheterotrophy","Proteobacteria","Unclassified Alteromonadaceae (family)",8,0.153,0.593,86.884
+"Chemoheterotrophy","Bacteroidota","Aureisphaera",2,0.152,0.59,87.474
+"Chemoheterotrophy","Proteobacteria","Alteromonas",4,0.146,0.566,88.041
+"Chemoheterotrophy","Bacteroidota","Flammeovirga",6,0.138,0.538,88.579
+"Chemoheterotrophy","Bacteroidota","Psychroflexus",3,0.136,0.527,89.106
+"Chemoheterotrophy","Bacteroidota","Lutimonas",1,0.125,0.485,89.591
+"Chemoheterotrophy","Proteobacteria","Microbulbifer",3,0.123,0.48,90.07
+"Chemoheterotrophy","Bacteroidota","Fulvivirga",2,0.122,0.474,90.544
+"Chemoheterotrophy","Bacteroidota","Flagellimonas",1,0.102,0.396,90.94
+"Chemoheterotrophy","Proteobacteria","Thalassospira",2,0.099,0.386,91.327
+"Chemoheterotrophy","Verrucomicrobiota","Roseibacillus",6,0.088,0.344,91.67
+"Chemoheterotrophy","Bacteroidota","Unclassified Flammeovirgaceae (family)",4,0.088,0.342,92.012
+"Chemoheterotrophy","Bacteroidota","Aureispira",5,0.084,0.325,92.337
+"Chemoheterotrophy","Bacteroidota","Mangrovimonas",2,0.082,0.32,92.657
+"Chemoheterotrophy","Proteobacteria","Roseovarius",5,0.081,0.315,92.972
+"Chemoheterotrophy","Bacteroidota","Cryomorpha",4,0.079,0.308,93.28
+"Chemoheterotrophy","Proteobacteria","Roseobacter",3,0.07,0.272,93.552
+"Chemoheterotrophy","Bacteroidota","Aureitalea",4,0.067,0.26,93.812
+"Chemoheterotrophy","Proteobacteria","Marinicella",8,0.066,0.257,94.069
+"Chemoheterotrophy","Proteobacteria","Algimonas",1,0.063,0.246,94.315
+"Chemoheterotrophy","Deinococcota","Truepera",3,0.062,0.24,94.555
+"Chemoheterotrophy","Bacteroidota","Algivirga",2,0.058,0.227,94.782
+"Chemoheterotrophy","Proteobacteria","Unclassified Stappiaceae (family)",5,0.058,0.227,95.008
+"Chemoheterotrophy","Proteobacteria","Algicola",1,0.056,0.219,95.228
+"Chemoheterotrophy","Bacteroidota","Persicobacter",1,0.054,0.211,95.439
+"Chemoheterotrophy","Bacteroidota","Dokdonia",4,0.051,0.199,95.638
+"Chemoheterotrophy","Proteobacteria","Filomicrobium",5,0.05,0.193,95.831
+"Chemoheterotrophy","Bacteroidota","Reichenbachiella",4,0.049,0.192,96.023
+"Chemoheterotrophy","Proteobacteria","Thalassobius",4,0.045,0.175,96.197
+"Chemoheterotrophy","Proteobacteria","Unclassified Vibrionaceae (family)",2,0.043,0.165,96.363
+"Chemoheterotrophy","Proteobacteria","Glaciecola",1,0.042,0.163,96.526
+"Chemoheterotrophy","Bacteroidota","Maritimimonas",1,0.042,0.162,96.688
+"Chemoheterotrophy","Proteobacteria","Marivita",1,0.041,0.161,96.849
+"Chemoheterotrophy","Bacteroidota","NS2b-marine-group",2,0.038,0.148,96.997
+"Chemoheterotrophy","Bacteroidota","Owenweeksia",4,0.038,0.146,97.144
+"Chemoheterotrophy","Verrucomicrobiota","Cerasicoccus",6,0.037,0.145,97.289
+"Chemoheterotrophy","Bacteroidota","Actibacter",2,0.036,0.142,97.43
+"Chemoheterotrophy","Fusobacteriota","Cetobacterium",1,0.035,0.134,97.565
+"Chemoheterotrophy","Bacteroidota","Flavobacterium",2,0.029,0.113,97.677
+"Chemoheterotrophy","Proteobacteria","Altererythrobacter",1,0.024,0.093,97.771
+"Chemoheterotrophy","Proteobacteria","Parasphingopyxis",1,0.024,0.093,97.864
+"Chemoheterotrophy","Proteobacteria","Roseivivax",1,0.023,0.091,97.955
+"Chemoheterotrophy","Proteobacteria","Maricaulis",1,0.023,0.089,98.044
+"Chemoheterotrophy","Proteobacteria","Legionella",1,0.022,0.087,98.131
+"Chemoheterotrophy","Proteobacteria","Marinicaulis",1,0.022,0.086,98.217
+"Chemoheterotrophy","Bacteroidota","Algoriphagus",2,0.022,0.084,98.301
+"Chemoheterotrophy","Proteobacteria","Dinoroseobacter",1,0.022,0.084,98.385
+"Chemoheterotrophy","Verrucomicrobiota","Pelagicoccus",2,0.021,0.083,98.468
+"Chemoheterotrophy","Firmicutes","Romboutsia",1,0.021,0.081,98.549
+"Chemoheterotrophy","Proteobacteria","Jannaschia",1,0.02,0.077,98.625
+"Chemoheterotrophy","Bacteroidota","Aquimarina",2,0.02,0.076,98.702
+"Chemoheterotrophy","Bacteroidota","Pseudofulvibacter",3,0.019,0.074,98.775
+"Chemoheterotrophy","Bacteroidota","Kordia",1,0.018,0.068,98.844
+"Chemoheterotrophy","Spirochaetota","Spirochaeta-2",1,0.017,0.066,98.91
+"Chemoheterotrophy","Proteobacteria","Pseudomonas",1,0.015,0.06,98.97
+"Chemoheterotrophy","Proteobacteria","Pseudoruegeria",1,0.015,0.059,99.03
+"Chemoheterotrophy","Proteobacteria","Unclassified Psychromonadaceae (family)",1,0.015,0.059,99.089
+"Chemoheterotrophy","Desulfobacterota","Desulforhopalus",1,0.015,0.057,99.146
+"Chemoheterotrophy","Proteobacteria","Unclassified Colwelliaceae (family)",2,0.015,0.057,99.204
+"Chemoheterotrophy","Desulfobacterota","Unclassified Desulfosarcinaceae (family)",1,0.015,0.057,99.26
+"Chemoheterotrophy","Bacteroidota","Rapidithrix",2,0.014,0.056,99.316
+"Chemoheterotrophy","Bacteroidota","Mesoflavibacter",1,0.014,0.053,99.369
+"Chemoheterotrophy","Proteobacteria","Psychrosphaera",2,0.014,0.053,99.422
+"Chemoheterotrophy","Proteobacteria","Comamonas",1,0.013,0.052,99.474
+"Chemoheterotrophy","Proteobacteria","Rheinheimera",2,0.013,0.051,99.524
+"Chemoheterotrophy","Bacteroidota","Ascidiimonas",3,0.011,0.042,99.567
+"Chemoheterotrophy","Proteobacteria","Oceanospirillum",1,0.011,0.042,99.608
+"Chemoheterotrophy","Bacteroidota","Saprospira",1,0.01,0.037,99.646
+"Chemoheterotrophy","Proteobacteria","Catenovulum",1,0.008,0.032,99.678
+"Chemoheterotrophy","Proteobacteria","oc32",1,0.008,0.029,99.707
+"Chemoheterotrophy","Verrucomicrobiota","Unclassified Verrucomicrobiaceae (family)",2,0.007,0.028,99.735
+"Chemoheterotrophy","Bacteroidota","Parabacteroides",1,0.007,0.028,99.763
+"Chemoheterotrophy","Bacteroidota","Algibacter",1,0.007,0.027,99.791
+"Chemoheterotrophy","Proteobacteria","Paramoritella",1,0.006,0.023,99.813
+"Chemoheterotrophy","Bacteroidota","NS4-marine-group",1,0.006,0.022,99.835
+"Chemoheterotrophy","Bacteroidota","Rubidimonas",1,0.006,0.021,99.857
+"Chemoheterotrophy","Proteobacteria","Psychrobacter",1,0.005,0.02,99.877
+"Chemoheterotrophy","Proteobacteria","Aeromonas",1,0.004,0.017,99.894
+"Chemoheterotrophy","Bacteroidota","Sediminitomix",1,0.004,0.016,99.91
+"Chemoheterotrophy","Bacteroidota","Chryseobacterium",1,0.004,0.016,99.926
+"Chemoheterotrophy","Proteobacteria","Agarivorans",1,0.004,0.016,99.942
+"Chemoheterotrophy","Proteobacteria","Roseibium",1,0.004,0.014,99.956
+"Chemoheterotrophy","Bacteroidota","Aureibacter",1,0.003,0.012,99.968
+"Chemoheterotrophy","Actinobacteriota","Mycobacterium",1,0.003,0.01,99.978
+"Chemoheterotrophy","Proteobacteria","Litorilituus",1,0.002,0.009,99.988
+"Chemoheterotrophy","Proteobacteria","Lentibacter",1,0.002,0.008,99.995
+"Chemoheterotrophy","Chloroflexi","Unclassified Caldilineaceae (family)",1,0.001,0.005,100
+"Aerobic chemoheterotrophy","Proteobacteria","Ruegeria",12,2.808,13.23,13.23
+"Aerobic chemoheterotrophy","Proteobacteria","Vibrio",17,2.692,12.681,25.911
+"Aerobic chemoheterotrophy","Bacteroidota","Winogradskyella",17,1.713,8.07,33.981
+"Aerobic chemoheterotrophy","Bacteroidota","Unclassified Cyclobacteriaceae (family)",71,1.153,5.433,39.413
+"Aerobic chemoheterotrophy","Planctomycetota","Blastopirellula",53,1.072,5.052,44.466
+"Aerobic chemoheterotrophy","Bacteroidota","Muricauda",17,0.835,3.934,48.4
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Coraliomargarita",14,0.735,3.463,51.863
+"Aerobic chemoheterotrophy","Bacteroidota","Tenacibaculum",13,0.691,3.255,55.118
+"Aerobic chemoheterotrophy","Bacteroidota","Lewinella",19,0.578,2.722,57.839
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Lentisphaera",15,0.546,2.573,60.413
+"Aerobic chemoheterotrophy","Proteobacteria","Unclassified Hyphomonadaceae (family)",3,0.502,2.367,62.779
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Rubritalea",5,0.492,2.32,65.099
+"Aerobic chemoheterotrophy","Planctomycetota","Rhodopirellula",30,0.472,2.222,67.321
+"Aerobic chemoheterotrophy","Bacteroidota","Flexithrix",9,0.425,2.004,69.324
+"Aerobic chemoheterotrophy","Bacteroidota","Fabibacter",4,0.418,1.971,71.296
+"Aerobic chemoheterotrophy","Proteobacteria","Photobacterium",10,0.417,1.963,73.259
+"Aerobic chemoheterotrophy","Bacteroidota","Crocinitomix",15,0.386,1.818,75.077
+"Aerobic chemoheterotrophy","Proteobacteria","Erythrobacter",6,0.322,1.519,76.596
+"Aerobic chemoheterotrophy","Bacteroidota","Ekhidna",9,0.314,1.478,78.074
+"Aerobic chemoheterotrophy","Proteobacteria","Acinetobacter",3,0.293,1.38,79.454
+"Aerobic chemoheterotrophy","Proteobacteria","Shimia",4,0.28,1.32,80.774
+"Aerobic chemoheterotrophy","Proteobacteria","Labrenzia",7,0.263,1.241,82.015
+"Aerobic chemoheterotrophy","Bacteroidota","Marinoscillum",8,0.249,1.174,83.189
+"Aerobic chemoheterotrophy","Bacteroidota","Psychroserpens",4,0.248,1.168,84.356
+"Aerobic chemoheterotrophy","Proteobacteria","Shewanella",2,0.228,1.076,85.432
+"Aerobic chemoheterotrophy","Bacteroidota","Portibacter",8,0.217,1.022,86.454
+"Aerobic chemoheterotrophy","Proteobacteria","Pseudoalteromonas",7,0.204,0.962,87.416
+"Aerobic chemoheterotrophy","Acidobacteriota","Acanthopleuribacter",7,0.181,0.853,88.269
+"Aerobic chemoheterotrophy","Proteobacteria","Thaumasiovibrio",13,0.168,0.791,89.06
+"Aerobic chemoheterotrophy","Proteobacteria","Roseobacter-clade-CHAB-I-5-lineage",5,0.157,0.739,89.799
+"Aerobic chemoheterotrophy","Bacteroidota","Flammeovirga",6,0.138,0.652,90.451
+"Aerobic chemoheterotrophy","Bacteroidota","Psychroflexus",3,0.136,0.639,91.09
+"Aerobic chemoheterotrophy","Bacteroidota","Fulvivirga",2,0.122,0.575,91.665
+"Aerobic chemoheterotrophy","Proteobacteria","Thalassospira",2,0.099,0.468,92.133
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Roseibacillus",6,0.088,0.417,92.55
+"Aerobic chemoheterotrophy","Bacteroidota","Unclassified Flammeovirgaceae (family)",4,0.088,0.414,92.964
+"Aerobic chemoheterotrophy","Bacteroidota","Aureispira",5,0.084,0.394,93.358
+"Aerobic chemoheterotrophy","Proteobacteria","Roseovarius",5,0.081,0.382,93.74
+"Aerobic chemoheterotrophy","Bacteroidota","Cryomorpha",4,0.079,0.373,94.113
+"Aerobic chemoheterotrophy","Proteobacteria","Roseobacter",3,0.07,0.33,94.443
+"Aerobic chemoheterotrophy","Proteobacteria","Marinicella",8,0.066,0.312,94.754
+"Aerobic chemoheterotrophy","Proteobacteria","Algimonas",1,0.063,0.298,95.052
+"Aerobic chemoheterotrophy","Bacteroidota","Algivirga",2,0.058,0.275,95.328
+"Aerobic chemoheterotrophy","Proteobacteria","Unclassified Stappiaceae (family)",5,0.058,0.275,95.602
+"Aerobic chemoheterotrophy","Bacteroidota","Persicobacter",1,0.054,0.256,95.858
+"Aerobic chemoheterotrophy","Bacteroidota","Dokdonia",4,0.051,0.241,96.099
+"Aerobic chemoheterotrophy","Proteobacteria","Filomicrobium",5,0.05,0.234,96.333
+"Aerobic chemoheterotrophy","Bacteroidota","Reichenbachiella",4,0.049,0.233,96.566
+"Aerobic chemoheterotrophy","Proteobacteria","Thalassobius",4,0.045,0.212,96.778
+"Aerobic chemoheterotrophy","Proteobacteria","Unclassified Vibrionaceae (family)",2,0.043,0.2,96.978
+"Aerobic chemoheterotrophy","Proteobacteria","Marivita",1,0.041,0.195,97.173
+"Aerobic chemoheterotrophy","Bacteroidota","Aureitalea",1,0.039,0.184,97.357
+"Aerobic chemoheterotrophy","Bacteroidota","Owenweeksia",4,0.038,0.177,97.535
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Cerasicoccus",6,0.037,0.176,97.711
+"Aerobic chemoheterotrophy","Bacteroidota","Actibacter",2,0.036,0.172,97.882
+"Aerobic chemoheterotrophy","Proteobacteria","Ferrimonas",1,0.036,0.171,98.053
+"Aerobic chemoheterotrophy","Bacteroidota","Flavobacterium",2,0.029,0.137,98.19
+"Aerobic chemoheterotrophy","Proteobacteria","Altererythrobacter",1,0.024,0.113,98.303
+"Aerobic chemoheterotrophy","Proteobacteria","Parasphingopyxis",1,0.024,0.113,98.416
+"Aerobic chemoheterotrophy","Proteobacteria","Roseivivax",1,0.023,0.11,98.526
+"Aerobic chemoheterotrophy","Proteobacteria","Maricaulis",1,0.023,0.108,98.634
+"Aerobic chemoheterotrophy","Proteobacteria","Legionella",1,0.022,0.106,98.74
+"Aerobic chemoheterotrophy","Proteobacteria","Marinicaulis",1,0.022,0.104,98.844
+"Aerobic chemoheterotrophy","Bacteroidota","Algoriphagus",2,0.022,0.102,98.946
+"Aerobic chemoheterotrophy","Proteobacteria","Dinoroseobacter",1,0.022,0.101,99.047
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Pelagicoccus",2,0.021,0.101,99.148
+"Aerobic chemoheterotrophy","Proteobacteria","Jannaschia",1,0.02,0.093,99.241
+"Aerobic chemoheterotrophy","Bacteroidota","Aquimarina",2,0.02,0.093,99.334
+"Aerobic chemoheterotrophy","Bacteroidota","Kordia",1,0.018,0.083,99.417
+"Aerobic chemoheterotrophy","Proteobacteria","Pseudomonas",1,0.015,0.073,99.49
+"Aerobic chemoheterotrophy","Proteobacteria","Pseudoruegeria",1,0.015,0.072,99.562
+"Aerobic chemoheterotrophy","Bacteroidota","Rapidithrix",2,0.014,0.068,99.629
+"Aerobic chemoheterotrophy","Proteobacteria","Comamonas",1,0.013,0.063,99.692
+"Aerobic chemoheterotrophy","Proteobacteria","Oceanospirillum",1,0.011,0.05,99.742
+"Aerobic chemoheterotrophy","Bacteroidota","Saprospira",1,0.01,0.045,99.787
+"Aerobic chemoheterotrophy","Proteobacteria","oc32",1,0.008,0.035,99.823
+"Aerobic chemoheterotrophy","Verrucomicrobiota","Unclassified Verrucomicrobiaceae (family)",2,0.007,0.034,99.857
+"Aerobic chemoheterotrophy","Bacteroidota","Rubidimonas",1,0.006,0.026,99.883
+"Aerobic chemoheterotrophy","Proteobacteria","Psychrobacter",1,0.005,0.025,99.908
+"Aerobic chemoheterotrophy","Bacteroidota","Sediminitomix",1,0.004,0.02,99.927
+"Aerobic chemoheterotrophy","Bacteroidota","Chryseobacterium",1,0.004,0.019,99.947
+"Aerobic chemoheterotrophy","Proteobacteria","Roseibium",1,0.004,0.017,99.964
+"Aerobic chemoheterotrophy","Bacteroidota","Aureibacter",1,0.003,0.015,99.978
+"Aerobic chemoheterotrophy","Actinobacteriota","Mycobacterium",1,0.003,0.012,99.991
+"Aerobic chemoheterotrophy","Proteobacteria","Lentibacter",1,0.002,0.009,100
+"Fermentation","Proteobacteria","Vibrio",17,2.692,39.348,39.348
+"Fermentation","Bacteroidota","Muricauda",17,0.835,12.207,51.555
+"Fermentation","Proteobacteria","Agaribacter",15,0.566,8.275,59.83
+"Fermentation","Proteobacteria","Photobacterium",10,0.417,6.091,65.921
+"Fermentation","Proteobacteria","Thalassotalea",15,0.346,5.064,70.984
+"Fermentation","Proteobacteria","Aestuariibacter",9,0.329,4.81,75.794
+"Fermentation","Proteobacteria","Shewanella",2,0.228,3.339,79.133
+"Fermentation","Proteobacteria","Pseudoalteromonas",7,0.204,2.986,82.119
+"Fermentation","Fusobacteriota","Propionigenium",4,0.192,2.811,84.929
+"Fermentation","Proteobacteria","Ferrimonas",10,0.179,2.613,87.543
+"Fermentation","Proteobacteria","Thaumasiovibrio",13,0.168,2.455,89.997
+"Fermentation","Proteobacteria","Unclassified Alteromonadaceae (family)",8,0.153,2.232,92.229
+"Fermentation","Proteobacteria","Alteromonas",4,0.146,2.131,94.36
+"Fermentation","Deinococcota","Truepera",3,0.062,0.904,95.264
+"Fermentation","Proteobacteria","Algicola",1,0.056,0.825,96.089
+"Fermentation","Proteobacteria","Unclassified Vibrionaceae (family)",2,0.043,0.622,96.711
+"Fermentation","Proteobacteria","Glaciecola",1,0.042,0.615,97.325
+"Fermentation","Fusobacteriota","Cetobacterium",1,0.035,0.505,97.831
+"Fermentation","Firmicutes","Romboutsia",1,0.021,0.304,98.135
+"Fermentation","Spirochaetota","Spirochaeta-2",1,0.017,0.249,98.384
+"Fermentation","Proteobacteria","Unclassified Psychromonadaceae (family)",1,0.015,0.223,98.607
+"Fermentation","Desulfobacterota","Desulforhopalus",1,0.015,0.216,98.823
+"Fermentation","Proteobacteria","Unclassified Colwelliaceae (family)",2,0.015,0.215,99.038
+"Fermentation","Proteobacteria","Psychrosphaera",2,0.014,0.199,99.237
+"Fermentation","Proteobacteria","Rheinheimera",2,0.013,0.19,99.427
+"Fermentation","Proteobacteria","Catenovulum",1,0.008,0.12,99.548
+"Fermentation","Bacteroidota","Parabacteroides",1,0.007,0.105,99.653
+"Fermentation","Bacteroidota","Algibacter",1,0.007,0.103,99.756
+"Fermentation","Proteobacteria","Paramoritella",1,0.006,0.086,99.842
+"Fermentation","Proteobacteria","Aeromonas",1,0.004,0.065,99.907
+"Fermentation","Proteobacteria","Agarivorans",1,0.004,0.059,99.966
+"Fermentation","Proteobacteria","Litorilituus",1,0.002,0.034,100
+"Anaerobic chemoheterotrophy","Proteobacteria","Agaribacter",15,0.566,12.566,12.566
+"Anaerobic chemoheterotrophy","Bacteroidota","Unclassified Flavobacteriaceae (family)",19,0.465,10.313,22.879
+"Anaerobic chemoheterotrophy","Proteobacteria","Thalassotalea",15,0.346,7.689,30.568
+"Anaerobic chemoheterotrophy","Proteobacteria","Aestuariibacter",9,0.329,7.303,37.871
+"Anaerobic chemoheterotrophy","Bacteroidota","Gilvibacter",4,0.309,6.858,44.729
+"Anaerobic chemoheterotrophy","Bacteroidota","Zeaxanthinibacter",10,0.245,5.439,50.168
+"Anaerobic chemoheterotrophy","Fusobacteriota","Propionigenium",4,0.192,4.268,54.436
+"Anaerobic chemoheterotrophy","Bacteroidota","Aquibacter",6,0.187,4.155,58.591
+"Anaerobic chemoheterotrophy","Bacteroidota","Aureicoccus",1,0.166,3.684,62.275
+"Anaerobic chemoheterotrophy","Bacteroidota","Aurantivirga",2,0.159,3.52,65.794
+"Anaerobic chemoheterotrophy","Proteobacteria","Unclassified Alteromonadaceae (family)",8,0.153,3.389,69.183
+"Anaerobic chemoheterotrophy","Bacteroidota","Aureisphaera",2,0.152,3.37,72.553
+"Anaerobic chemoheterotrophy","Proteobacteria","Alteromonas",4,0.146,3.236,75.789
+"Anaerobic chemoheterotrophy","Proteobacteria","Ferrimonas",9,0.142,3.162,78.951
+"Anaerobic chemoheterotrophy","Bacteroidota","Lutimonas",1,0.125,2.769,81.72
+"Anaerobic chemoheterotrophy","Proteobacteria","Microbulbifer",3,0.123,2.74,84.459
+"Anaerobic chemoheterotrophy","Bacteroidota","Flagellimonas",1,0.102,2.261,86.72
+"Anaerobic chemoheterotrophy","Bacteroidota","Mangrovimonas",2,0.082,1.83,88.55
+"Anaerobic chemoheterotrophy","Deinococcota","Truepera",3,0.062,1.372,89.922
+"Anaerobic chemoheterotrophy","Proteobacteria","Algicola",1,0.056,1.253,91.175
+"Anaerobic chemoheterotrophy","Proteobacteria","Glaciecola",1,0.042,0.933,92.108
+"Anaerobic chemoheterotrophy","Bacteroidota","Maritimimonas",1,0.042,0.927,93.035
+"Anaerobic chemoheterotrophy","Bacteroidota","NS2b-marine-group",2,0.038,0.845,93.88
+"Anaerobic chemoheterotrophy","Fusobacteriota","Cetobacterium",1,0.035,0.767,94.647
+"Anaerobic chemoheterotrophy","Bacteroidota","Aureitalea",3,0.028,0.615,95.262
+"Anaerobic chemoheterotrophy","Firmicutes","Romboutsia",1,0.021,0.462,95.724
+"Anaerobic chemoheterotrophy","Bacteroidota","Pseudofulvibacter",3,0.019,0.421,96.145
+"Anaerobic chemoheterotrophy","Spirochaetota","Spirochaeta-2",1,0.017,0.378,96.523
+"Anaerobic chemoheterotrophy","Proteobacteria","Unclassified Psychromonadaceae (family)",1,0.015,0.339,96.862
+"Anaerobic chemoheterotrophy","Desulfobacterota","Desulforhopalus",1,0.015,0.328,97.189
+"Anaerobic chemoheterotrophy","Proteobacteria","Unclassified Colwelliaceae (family)",2,0.015,0.327,97.517
+"Anaerobic chemoheterotrophy","Desulfobacterota","Unclassified Desulfosarcinaceae (family)",1,0.015,0.323,97.84
+"Anaerobic chemoheterotrophy","Bacteroidota","Mesoflavibacter",1,0.014,0.305,98.145
+"Anaerobic chemoheterotrophy","Proteobacteria","Psychrosphaera",2,0.014,0.302,98.447
+"Anaerobic chemoheterotrophy","Proteobacteria","Rheinheimera",2,0.013,0.289,98.736
+"Anaerobic chemoheterotrophy","Bacteroidota","Ascidiimonas",3,0.011,0.241,98.977
+"Anaerobic chemoheterotrophy","Proteobacteria","Catenovulum",1,0.008,0.183,99.16
+"Anaerobic chemoheterotrophy","Bacteroidota","Parabacteroides",1,0.007,0.16,99.32
+"Anaerobic chemoheterotrophy","Bacteroidota","Algibacter",1,0.007,0.157,99.476
+"Anaerobic chemoheterotrophy","Proteobacteria","Paramoritella",1,0.006,0.13,99.606
+"Anaerobic chemoheterotrophy","Bacteroidota","NS4-marine-group",1,0.006,0.125,99.731
+"Anaerobic chemoheterotrophy","Proteobacteria","Aeromonas",1,0.004,0.099,99.83
+"Anaerobic chemoheterotrophy","Proteobacteria","Agarivorans",1,0.004,0.089,99.92
+"Anaerobic chemoheterotrophy","Proteobacteria","Litorilituus",1,0.002,0.052,99.972
+"Anaerobic chemoheterotrophy","Chloroflexi","Unclassified Caldilineaceae (family)",1,0.001,0.028,100
+"Nitrate reduction","Proteobacteria","Vibrio",17,2.692,78.627,78.627
+"Nitrate reduction","Bacteroidota","Gilvibacter",2,0.276,8.067,86.694
+"Nitrate reduction","Proteobacteria","Shewanella",2,0.228,6.672,93.365
+"Nitrate reduction","Bacteroidota","Flammeovirga",6,0.138,4.045,97.41
+"Nitrate reduction","Bacteroidota","Aureitalea",1,0.039,1.142,98.552
+"Nitrate reduction","Bacteroidota","Kordia",1,0.018,0.514,99.065
+"Nitrate reduction","Proteobacteria","Ruegeria",1,0.015,0.446,99.512
+"Nitrate reduction","Verrucomicrobiota","Rubritalea",1,0.01,0.301,99.813
+"Nitrate reduction","Proteobacteria","Aeromonas",1,0.004,0.13,99.943
+"Nitrate reduction","Proteobacteria","Lentibacter",1,0.002,0.057,100
+"Cellulolysis","Bacteroidota","Lewinella",19,0.578,82.397,82.397
+"Cellulolysis","Proteobacteria","Microbulbifer",3,0.123,17.603,100
+"Nitrification (= aerobic ammonia oxidation)","Crenarchaeota","Candidatus-Nitrosopumilus",7,0.503,97.042,97.042
+"Nitrification (= aerobic ammonia oxidation)","Crenarchaeota","Unclassified Nitrososphaeraceae (family)",2,0.008,1.508,98.55
+"Nitrification (= aerobic ammonia oxidation)","Proteobacteria","oc32",1,0.008,1.45,100
+"Aromatic compound degradation","Proteobacteria","Acinetobacter",3,0.293,70.358,70.358
+"Aromatic compound degradation","Proteobacteria","Microbulbifer",3,0.123,29.642,100
+"Nitrate respiration (= nitrogen respiration)","Proteobacteria","Shewanella",2,0.228,80.771,80.771
+"Nitrate respiration (= nitrogen respiration)","Bacteroidota","Aureitalea",1,0.039,13.824,94.596
+"Nitrate respiration (= nitrogen respiration)","Proteobacteria","Ruegeria",1,0.015,5.404,100
+"Chitinolysis","Proteobacteria","Microbulbifer",3,0.123,69.459,69.459
+"Chitinolysis","Bacteroidota","Persicobacter",1,0.054,30.541,100
+"Respiration of sulfur compounds","Desulfobacterota","Desulfotalea",2,0.09,42.953,42.953
+"Respiration of sulfur compounds","Proteobacteria","Ferrimonas",1,0.036,17.24,60.193
+"Respiration of sulfur compounds","Desulfobacterota","Unclassified Desulfocapsaceae (family)",1,0.035,16.709,76.902
+"Respiration of sulfur compounds","Desulfobacterota","Desulforhopalus",1,0.015,7.005,83.907
+"Respiration of sulfur compounds","Desulfobacterota","Unclassified Desulfosarcinaceae (family)",1,0.015,6.915,90.822
+"Respiration of sulfur compounds","Desulfobacterota","Desulfovibrio",1,0.012,5.844,96.666
+"Respiration of sulfur compounds","Firmicutes","Fusibacter",1,0.004,1.688,98.355
+"Respiration of sulfur compounds","Desulfobacterota","Halodesulfovibrio",1,0.003,1.645,100
+"Sulfate respiration","Desulfobacterota","Desulfotalea",2,0.09,52.982,52.982
+"Sulfate respiration","Desulfobacterota","Unclassified Desulfocapsaceae (family)",1,0.035,20.61,73.592
+"Sulfate respiration","Desulfobacterota","Desulforhopalus",1,0.015,8.64,82.232
+"Sulfate respiration","Desulfobacterota","Unclassified Desulfosarcinaceae (family)",1,0.015,8.53,90.762
+"Sulfate respiration","Desulfobacterota","Desulfovibrio",1,0.012,7.209,97.97
+"Sulfate respiration","Desulfobacterota","Halodesulfovibrio",1,0.003,2.03,100
+"Xylanolysis","Proteobacteria","Microbulbifer",3,0.123,100,100
+"Dark hydrogen oxidation","Desulfobacterota","Desulfotalea",2,0.09,58.375,58.375
+"Dark hydrogen oxidation","Desulfobacterota","Unclassified Desulfocapsaceae (family)",1,0.035,22.708,81.083
+"Dark hydrogen oxidation","Desulfobacterota","Desulforhopalus",1,0.015,9.52,90.602
+"Dark hydrogen oxidation","Desulfobacterota","Unclassified Desulfosarcinaceae (family)",1,0.015,9.398,100

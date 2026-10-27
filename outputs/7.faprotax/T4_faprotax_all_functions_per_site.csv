@@ -1,0 +1,22 @@
+"Function","ASVs","MiosKon","Lumba-Lumba","SouthKri","Arborek","Yenbuba","New Reef","Sorido Bay","Grace's Wall","All mats","Mats present (%)","Shown in heatmap"
+"Oxygenic photoautotrophy (≈ photoautotrophy, phototrophy)",81,33.64,52.93,46.92,34.42,40.79,28.54,30.88,24.43,36.34,100,TRUE
+"Chemoheterotrophy",687,28.46,18.02,16.52,26.49,24.95,32.85,26.74,31.52,25.73,100,TRUE
+"Aerobic chemoheterotrophy",533,23.24,14.59,13.37,22.06,21.36,28,21.82,25.46,21.23,100,TRUE
+"Fermentation",156,6.34,6.69,2.52,6.19,6.29,13.88,8.73,4.9,6.84,100,TRUE
+"Anaerobic chemoheterotrophy",154,5.22,3.43,3.14,4.43,3.59,4.85,4.92,6.06,4.5,100,TRUE
+"Nitrate reduction",33,2.3,4.1,1.09,3.2,1.6,9.76,3.93,2.13,3.42,100,TRUE
+"Cellulolysis",22,0.99,0.3,0.31,0.66,0.99,0.75,0.93,0.62,0.7,100,TRUE
+"Nitrification (= aerobic ammonia oxidation)",10,0.21,0.24,1.09,1.47,0.09,0.28,0.13,0.52,0.52,91,TRUE
+"Aromatic compound degradation",6,0.43,0.24,0.24,0.34,0.47,0.67,0.38,0.61,0.42,100,TRUE
+"Nitrate respiration (= nitrogen respiration)",4,0.37,0.22,0.18,0.45,0.1,0.37,0.19,0.32,0.28,98,TRUE
+"Respiration of sulfur compounds",9,0.47,0.02,0.13,0.07,0.02,0.14,0.53,0.08,0.21,58,TRUE
+"Chitinolysis",4,0.05,0.09,0.09,0.24,0.38,0.21,0.24,0.24,0.18,93,TRUE
+"Sulfate respiration",7,0.46,0,0.1,0.02,0.02,0,0.48,0.06,0.17,47,TRUE
+"Dark hydrogen oxidation",5,0.41,0,0.06,0.02,0.02,0,0.47,0.05,0.16,42,TRUE
+"Xylanolysis",3,0.03,0.08,0.08,0.12,0.35,0.19,0.07,0.19,0.12,80,TRUE
+"Iron respiration (= sulfur respiration, arsenate respiration, manganese respiration, dissimilatory arsenate reduction)",1,0.01,0.02,0.03,0.05,0,0.14,0.05,0.01,0.04,20,FALSE
+"Denitrification (= nitrate denitrification, nitrite denitrification, nitrite respiration)",1,0,0,0,0,0,0.05,0,0.09,0.02,18,FALSE
+"Thiosulfate respiration",2,0.03,0,0,0.01,0,0,0.07,0.02,0.02,22,FALSE
+"Ureolysis",1,0.01,0,0.01,0.01,0.13,0,0,0,0.02,11,FALSE
+"Anoxygenic photoautotrophy (= anoxygenic photoautotrophy s oxidizing)",1,0,0,0,0,0,0,0.05,0,0.01,11,FALSE
+"Sulfite respiration",1,0.03,0,0,0.01,0,0,0.06,0.01,0.01,16,FALSE

@@ -1,0 +1,5 @@
+"Variable","taxa","CI_excludes_0","expected_false_pos","BH_p_adj_below_0.05"
+"DIN",323,5,16.2,0
+"mean.PO4",327,12,16.4,0
+"temperature",327,10,16.4,0
+"chla",329,5,16.4,1

@@ -1,5 +1,0 @@
-"Variable","taxa_tested","n_numerically_ok","sig_CI_excludes_0","sig_BH","significant","n_effect_ok","supported","robust","robust_positive","robust_negative"
-"DIN",328,325,11,0,11,6,5,1,1,0
-"mean.PO4",328,316,22,1,22,22,12,10,7,3
-"temperature",328,324,23,0,23,23,18,5,0,5
-"chla",328,298,5,0,5,5,3,2,1,1
